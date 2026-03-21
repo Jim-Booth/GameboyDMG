@@ -35,6 +35,7 @@ namespace GameboyEmu.Core
 
         byte keypadState = 0xFF;
 
+        private bool _useBootROM;
         public bool ResetRequested { get; set; }
 
         public bool IsRunning { get; set; }
@@ -62,10 +63,24 @@ namespace GameboyEmu.Core
         {
             Array.Copy(File.ReadAllBytes(path), 0, mMU!.Cartridge, 0, size);
             Array.Copy(mMU!.Cartridge, 0, mMU!.Memory, 0, 0x8000);
-            Array.Copy(mMU!.Cartridge, 0, tempROM, 0, 0xFF);
-            Array.Copy(File.ReadAllBytes("dmg_boot.bin"),0, mMU!.Memory, 0x00, 0xFF);
             mMU!.CurrentROMBank = 1;
-            cPU!.registers.PC = 0x00;
+
+            if (File.Exists("dmg_boot.bin"))
+            {
+                // Run the boot ROM: back up the first 0xFF bytes of the
+                // cartridge so they can be restored after the boot sequence.
+                Array.Copy(mMU!.Cartridge, 0, tempROM, 0, 0xFF);
+                Array.Copy(File.ReadAllBytes("dmg_boot.bin"), 0, mMU!.Memory, 0x00, 0xFF);
+                cPU!.registers.PC = 0x00;
+                _useBootROM = true;
+            }
+            else
+            {
+                // No boot ROM — jump straight to post-boot state.
+                InitialiseGameboyForCartridge(0x100);
+                mMU!.InitROMBanks();
+                _useBootROM = false;
+            }
         }
 
         public void PostBootROMCopy()
@@ -143,7 +158,7 @@ namespace GameboyEmu.Core
                 pPU.Update(cycles);
                 aPU.Tick(cycles);
                 HandleInterupts();
-                if (cPU.registers.PC == 0x100)
+                if (_useBootROM && cPU.registers.PC == 0x100)
                     PostBootROMCopy();
             }
             IsRunning = false;

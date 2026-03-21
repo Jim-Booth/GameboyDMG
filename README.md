@@ -60,7 +60,7 @@ A Game Boy (DMG) emulator written in C# targeting .NET 9.0, using SDL2 for cross
 
 - [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
 - [SDL2](https://www.libsdl.org/) runtime library installed on your system
-- `dmg_boot.bin` — Game Boy boot ROM (placed in the working directory)
+- `dmg_boot.bin` — Game Boy boot ROM (optional, placed in the working directory). If present, the Nintendo logo scroll animation plays on startup. If absent, games start directly.
 
 ## Building & Running
 
