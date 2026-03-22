@@ -52,9 +52,9 @@ A Game Boy (DMG) emulator written in C# targeting .NET 9.0, using SDL2 for cross
 
 | Key | Action |
 |-----|--------|
-| Arrow Keys | D-Pad |
-| Z | A |
-| X | B |
+| W/A/S/D | D-Pad (Up/Left/Down/Right) |
+| M | A |
+| N | B |
 | Enter | Start |
 | Space | Select |
 | Escape | Reset (return to ROM menu) |

@@ -99,7 +99,7 @@ namespace GameboyEmu
                     display.RenderFrame(gb.LCD);
                 };
 
-                Console.WriteLine("Controls: Arrow keys=D-Pad, Z=A, X=B, Enter=Start, Space=Select, Esc=Reset");
+                Console.WriteLine("Controls: WASD=D-Pad, M=A, N=B, Enter=Start, Space=Select, Esc=Reset");
                 gb.Start();
 
                 bool wasReset = gb.ResetRequested;

@@ -25,9 +25,9 @@ namespace GameboyEmu.Core
     /// and handles keyboard input mapped to Game Boy controls.
     ///
     /// Key mapping:
-    ///   Arrow keys  -> D-Pad
-    ///   Z           -> A
-    ///   X           -> B
+    ///   WASD        -> D-Pad
+    ///   M           -> A
+    ///   N           -> B
     ///   Enter       -> Start
     ///   Space       -> Select
     ///   Escape      -> Reset (return to ROM menu)
@@ -190,12 +190,12 @@ namespace GameboyEmu.Core
         /// </summary>
         private static int MapKey(int scancode) => scancode switch
         {
-            SDL2.SDL_SCANCODE_RIGHT  => 0,
-            SDL2.SDL_SCANCODE_LEFT   => 1,
-            SDL2.SDL_SCANCODE_UP     => 2,
-            SDL2.SDL_SCANCODE_DOWN   => 3,
-            SDL2.SDL_SCANCODE_Z      => 4, // A
-            SDL2.SDL_SCANCODE_X      => 5, // B
+            SDL2.SDL_SCANCODE_D      => 0, // Right
+            SDL2.SDL_SCANCODE_A      => 1, // Left
+            SDL2.SDL_SCANCODE_W      => 2, // Up
+            SDL2.SDL_SCANCODE_S      => 3, // Down
+            SDL2.SDL_SCANCODE_M      => 4, // A
+            SDL2.SDL_SCANCODE_N      => 5, // B
             SDL2.SDL_SCANCODE_SPACE  => 6, // Select
             SDL2.SDL_SCANCODE_RETURN => 7, // Start
             _ => -1
