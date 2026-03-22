@@ -32,7 +32,11 @@ A Game Boy (DMG) emulator written in C# targeting .NET 9.0, using SDL2 for cross
 
 ### Memory (MMU)
 - Full 64 KB address space
-- MBC1 and MBC2 cartridge mappers with ROM/RAM banking
+- Automatic mapper detection from ROM header (0x0147/0x0148/0x0149)
+- MBC1 cartridge mapper with ROM/RAM banking and advanced mode
+- MBC2 cartridge mapper with built-in 4-bit RAM
+- MBC3 cartridge mapper with ROM/RAM banking and RTC register support
+- MBC5 cartridge mapper with 9-bit ROM bank select (up to 512 banks)
 - Boot ROM (`dmg_boot.bin`) execution with automatic hand-off to cartridge
 
 ### Input

@@ -1,8 +1,8 @@
 ﻿// ============================================================================
 // Project:     GameboyEmu
 // File:        Core/MMU.cs
-// Description: Memory Management Unit — 64 KB address space with MBC1/MBC2
-//              cartridge banking, ROM/RAM mapping, and I/O routing
+// Description: Memory Management Unit — 64 KB address space with MBC1/MBC2/
+//              MBC3/MBC5 cartridge banking, ROM/RAM mapping, and I/O routing
 // Author:      James Booth
 // Created:     2024
 // License:     MIT License - See LICENSE file in the project root
@@ -19,19 +19,30 @@ using System.IO;
 
 namespace GameboyEmu.Core
 {
+    public enum MBCType { None, MBC1, MBC2, MBC3, MBC5 }
+
     public class MMU(GameBoy gb)
     {
         public byte[] Memory { get; set; } = new byte[0x10000];
         public byte[] Cartridge { get; set; } = new byte[0x200000];
 
-
-        private bool ROMBank1 = false;
-        private bool ROMBank2 = false;
+        public MBCType MapperType = MBCType.None;
         public byte CurrentROMBank = 1;
-        private bool MemoryMode16 = true;
+        private byte _romBankHigh = 0;       // MBC1 upper 2 bits / MBC5 9th bit
+        private bool _mbc1AdvancedMode = false; // MBC1 banking mode (0=16Mbit ROM/8KB RAM, 1=4Mbit ROM/32KB RAM)
         private byte CurrentRAMBank = 0;
-        private readonly byte[] RAMBanks = new byte[0x8000];
+        private readonly byte[] RAMBanks = new byte[0x20000]; // 128 KB max (MBC5 can have 16 banks)
         private bool EnableRAM = false;
+        private int _romBankCount = 2;
+        private int _ramSize = 0;
+
+        // MBC3 RTC registers
+        private byte _rtcS, _rtcM, _rtcH, _rtcDL, _rtcDH;
+        private byte _rtcLatchedS, _rtcLatchedM, _rtcLatchedH, _rtcLatchedDL, _rtcLatchedDH;
+        private byte _rtcLatchPrev = 0xFF;
+        private bool _rtcMapped = false;     // true when 0x08-0x0C is selected instead of RAM bank
+        private byte _rtcSelectedReg = 0;
+
         private readonly GameBoy gameboy = gb;
 
         /// <summary>APU instance – set by GameBoy after construction.</summary>
@@ -47,121 +58,181 @@ namespace GameboyEmu.Core
 
             addr &= 0xFFFF;
 
+            // ===== MBC register writes (ROM area 0x0000–0x7FFF) =====
+
             if (addr <= 0x1FFF)
             {
-                if (ROMBank1)
+                // RAM enable (all MBCs: 0x0A in lower nibble = enable)
+                switch (MapperType)
                 {
-                    if ((value & 0xF) == 0xA)
-                        EnableRAM = true;
-                    else if (value == 0x0)
-                        EnableRAM = false;
-                }
-                else if (ROMBank2)
-                {
-                    if (false == gameboy.TestBit((byte)(addr>>8), 0)) //bit 0 of upper byte must be 0
-                    {
-                        if ((value & 0xF) == 0xA)
-                            EnableRAM = true;
-                        else if (value == 0x0)
-                            EnableRAM = false;
-                    }
+                    case MBCType.MBC1:
+                    case MBCType.MBC3:
+                    case MBCType.MBC5:
+                        EnableRAM = (value & 0x0F) == 0x0A;
+                        break;
+                    case MBCType.MBC2:
+                        // MBC2: bit 0 of upper address byte must be 0
+                        if ((addr & 0x0100) == 0)
+                            EnableRAM = (value & 0x0F) == 0x0A;
+                        break;
                 }
             }
 
-            else if ((addr >= 0x2000) && (addr <= 0x3FFF))
+            else if (addr >= 0x2000 && addr <= 0x3FFF)
             {
-                if (ROMBank1)
+                switch (MapperType)
                 {
-                    if (value == 0x00)
-                        value++;
-
-                    value &= 31;
-
-                    // Turn off the lower 5-bits.
-                    CurrentROMBank &= 224;
-
-                    // Combine the written value with the register.
-                    CurrentROMBank |= value;
-
-                    //Debug.WriteLine( "Changing Rom Bank to %d", CurrentROMBank);
-
-                }
-                else if (ROMBank2)
-                {
-                    value &= 0xF;
-                    CurrentROMBank = value;
-                }
-            }
-
-
-            // writing to address 0x4000 to 0x5FFF switches ram banks (if enabled of course)
-            else if ((addr >= 0x4000) && (addr <= 0x5FFF))
-            {
-                if (ROMBank1)
-                {
-                    // are we using memory model 16/8
-                    if (MemoryMode16)
-                    {
-                        // in this mode we can only use Ram Bank 0
-                        CurrentRAMBank = 0;
-
-                        value &= 3;
-                        value <<= 5;
-
-                        if ((CurrentROMBank & 31) == 0)
+                    case MBCType.MBC1:
+                        value &= 0x1F;
+                        if (value == 0) value = 1;  // MBC1: bank 0 → bank 1
+                        CurrentROMBank = (byte)((CurrentROMBank & 0xE0) | value);
+                        break;
+                    case MBCType.MBC2:
+                        // MBC2: bit 0 of upper address byte must be 1
+                        if ((addr & 0x0100) != 0)
+                            CurrentROMBank = (byte)(value & 0x0F);
+                        if (CurrentROMBank == 0) CurrentROMBank = 1;
+                        break;
+                    case MBCType.MBC3:
+                        value &= 0x7F;
+                        if (value == 0) value = 1;  // MBC3: bank 0 → bank 1
+                        CurrentROMBank = value;
+                        break;
+                    case MBCType.MBC5:
+                        if (addr <= 0x2FFF)
                         {
-                            value++;
+                            // Low 8 bits of ROM bank
+                            CurrentROMBank = value;
                         }
-
-                        // Turn off bits 5 and 6, and 7 if it somehow got turned on.
-                        CurrentROMBank &= 31;
-
-                        // Combine the written value with the register.
-                        CurrentROMBank |= value;
-
-                        //Debug.WriteLine("Changing Rom Bank to %d", CurrentROMBank);
-
-                    }
-                    else
-                    {
-                        CurrentRAMBank = (byte)(value & 0x3);
-                        //Debug.WriteLine("Changing Rom Bank to %d", CurrentROMBank);
-
-                    }
+                        else
+                        {
+                            // Bit 0 = 9th bit of ROM bank number
+                            _romBankHigh = (byte)(value & 0x01);
+                        }
+                        // MBC5: bank 0 is valid — no adjustment needed
+                        break;
                 }
             }
 
-            // writing to addr 0x6000 to 0x7FFF switches memory model
-            else if ((addr >= 0x6000) && (addr <= 0x7FFF))
+            else if (addr >= 0x4000 && addr <= 0x5FFF)
             {
-                if (ROMBank1)
+                switch (MapperType)
                 {
-                    // we're only interested in the first bit
-                    value &= 1;
-                    if (value == 1)
-                    {
-                        CurrentRAMBank = 0;
-                        MemoryMode16 = false;
-                    }
-                    else
-                        MemoryMode16 = true;
+                    case MBCType.MBC1:
+                        value &= 0x03;
+                        if (_mbc1AdvancedMode)
+                        {
+                            CurrentRAMBank = value;
+                        }
+                        else
+                        {
+                            _romBankHigh = value;
+                            CurrentROMBank = (byte)(((value << 5) | (CurrentROMBank & 0x1F)));
+                            if ((CurrentROMBank & 0x1F) == 0)
+                                CurrentROMBank++;
+                        }
+                        break;
+                    case MBCType.MBC3:
+                        if (value <= 0x03)
+                        {
+                            CurrentRAMBank = value;
+                            _rtcMapped = false;
+                        }
+                        else if (value >= 0x08 && value <= 0x0C)
+                        {
+                            _rtcMapped = true;
+                            _rtcSelectedReg = value;
+                        }
+                        break;
+                    case MBCType.MBC5:
+                        CurrentRAMBank = (byte)(value & 0x0F);
+                        break;
                 }
             }
 
-            else if ((addr >= 0xA000) && (addr < 0xC000))
+            else if (addr >= 0x6000 && addr <= 0x7FFF)
+            {
+                switch (MapperType)
+                {
+                    case MBCType.MBC1:
+                        _mbc1AdvancedMode = (value & 0x01) != 0;
+                        if (_mbc1AdvancedMode)
+                        {
+                            // In advanced/RAM mode, upper ROM bits go to RAM bank
+                            CurrentRAMBank = _romBankHigh;
+                        }
+                        else
+                        {
+                            CurrentRAMBank = 0;
+                        }
+                        break;
+                    case MBCType.MBC3:
+                        // RTC latch: writing 0x00 then 0x01 latches current time
+                        if (_rtcLatchPrev == 0x00 && value == 0x01)
+                        {
+                            _rtcLatchedS = _rtcS;
+                            _rtcLatchedM = _rtcM;
+                            _rtcLatchedH = _rtcH;
+                            _rtcLatchedDL = _rtcDL;
+                            _rtcLatchedDH = _rtcDH;
+                        }
+                        _rtcLatchPrev = value;
+                        break;
+                }
+            }
+
+            else if (addr >= 0xA000 && addr < 0xC000)
             {
                 if (EnableRAM)
                 {
-                    if (ROMBank1)
+                    switch (MapperType)
                     {
-                        uint newAddress = addr - 0xA000;
-                        RAMBanks[newAddress + (CurrentRAMBank * 0x2000)] = value;
+                        case MBCType.MBC1:
+                        case MBCType.MBC5:
+                        {
+                            uint ramAddr = (uint)((addr - 0xA000) + CurrentRAMBank * 0x2000);
+                            if (ramAddr < RAMBanks.Length)
+                                RAMBanks[ramAddr] = value;
+                            break;
+                        }
+                        case MBCType.MBC2:
+                        {
+                            if (addr < 0xA200)
+                            {
+                                uint ramAddr = addr - 0xA000;
+                                RAMBanks[ramAddr] = (byte)(value & 0x0F); // MBC2: 4-bit RAM
+                            }
+                            break;
+                        }
+                        case MBCType.MBC3:
+                        {
+                            if (_rtcMapped)
+                            {
+                                switch (_rtcSelectedReg)
+                                {
+                                    case 0x08: _rtcS = value; break;
+                                    case 0x09: _rtcM = value; break;
+                                    case 0x0A: _rtcH = value; break;
+                                    case 0x0B: _rtcDL = value; break;
+                                    case 0x0C: _rtcDH = value; break;
+                                }
+                            }
+                            else
+                            {
+                                uint ramAddr = (uint)((addr - 0xA000) + CurrentRAMBank * 0x2000);
+                                if (ramAddr < RAMBanks.Length)
+                                    RAMBanks[ramAddr] = value;
+                            }
+                            break;
+                        }
+                        default:
+                        {
+                            uint ramAddr = addr - 0xA000;
+                            if (ramAddr < RAMBanks.Length)
+                                RAMBanks[ramAddr] = value;
+                            break;
+                        }
                     }
-                }
-                else if (ROMBank2 && (addr < 0xA200))
-                {
-                    uint newAddress = addr - 0xA000;
-                    RAMBanks[newAddress + (CurrentRAMBank * 0x2000)] = value;
                 }
             }
 
@@ -247,15 +318,46 @@ namespace GameboyEmu.Core
 
             if (addr >= 0x4000 && addr <= 0x7FFF)
             {
-                uint newAddr = addr;
-                newAddr += (uint)((CurrentROMBank - 1) * 0x4000);
-                return Cartridge[newAddr];
+                int effectiveBank;
+                if (MapperType == MBCType.MBC5)
+                    effectiveBank = CurrentROMBank | (_romBankHigh << 8);
+                else
+                    effectiveBank = CurrentROMBank;
+
+                uint romAddr = (uint)((addr - 0x4000) + effectiveBank * 0x4000);
+                if (romAddr < Cartridge.Length)
+                    return Cartridge[romAddr];
+                return 0xFF;
             }
 
             else if (addr >= 0xA000 && addr <= 0xBFFF)
             {
-                uint newAddr = addr - 0xA000;
-                return RAMBanks[newAddr + (CurrentRAMBank * 0x2000)];
+                if (!EnableRAM && MapperType != MBCType.None)
+                    return 0xFF;
+
+                if (MapperType == MBCType.MBC3 && _rtcMapped)
+                {
+                    return _rtcSelectedReg switch
+                    {
+                        0x08 => _rtcLatchedS,
+                        0x09 => _rtcLatchedM,
+                        0x0A => _rtcLatchedH,
+                        0x0B => _rtcLatchedDL,
+                        0x0C => _rtcLatchedDH,
+                        _ => 0xFF,
+                    };
+                }
+
+                if (MapperType == MBCType.MBC2)
+                {
+                    if (addr >= 0xA200) return 0xFF;
+                    return (byte)(RAMBanks[addr - 0xA000] | 0xF0); // upper 4 bits read as 1
+                }
+
+                uint ramAddr = (uint)((addr - 0xA000) + CurrentRAMBank * 0x2000);
+                if (ramAddr < RAMBanks.Length)
+                    return RAMBanks[ramAddr];
+                return 0xFF;
             }
 
             else if (addr == 0xFF00)
@@ -301,19 +403,48 @@ namespace GameboyEmu.Core
 
         public void InitROMBanks()
         {
-            byte b = Memory[0x147];
-            switch (b)
+            byte cartridgeType = Cartridge[0x0147];
+            byte romSizeByte = Cartridge[0x0148];
+            byte ramSizeByte = Cartridge[0x0149];
+
+            // Determine mapper type from cartridge header
+            MapperType = cartridgeType switch
             {
-                case 1:
-                case 2:
-                case 3:
-                    ROMBank1 = true;
-                    return;
-                case 5:
-                case 6:
-                    ROMBank2 = true;
-                    return;
-            }
+                0x00 => MBCType.None,         // ROM only
+                0x01 or 0x02 or 0x03 => MBCType.MBC1,
+                0x05 or 0x06 => MBCType.MBC2,
+                0x0F or 0x10 or 0x11 or 0x12 or 0x13 => MBCType.MBC3,
+                0x19 or 0x1A or 0x1B or 0x1C or 0x1D or 0x1E => MBCType.MBC5,
+                _ => MBCType.None,            // fallback
+            };
+
+            // ROM bank count: 2 << romSizeByte (each bank is 16 KB)
+            _romBankCount = romSizeByte <= 8 ? (2 << romSizeByte) : 2;
+
+            // RAM size
+            _ramSize = ramSizeByte switch
+            {
+                0x00 => 0,
+                0x01 => 2048,       // 2 KB (unused in practice)
+                0x02 => 8192,       // 8 KB  (1 bank)
+                0x03 => 32768,      // 32 KB (4 banks)
+                0x04 => 131072,     // 128 KB (16 banks)
+                0x05 => 65536,      // 64 KB (8 banks)
+                _ => 0,
+            };
+
+            // MBC2 has built-in 512×4-bit RAM regardless of header
+            if (MapperType == MBCType.MBC2)
+                _ramSize = 512;
+
+            CurrentROMBank = 1;
+            CurrentRAMBank = 0;
+            EnableRAM = false;
+            _romBankHigh = 0;
+            _mbc1AdvancedMode = false;
+            _rtcMapped = false;
+
+            Console.WriteLine($"[MMU] Cartridge type: 0x{cartridgeType:X2} → {MapperType}, ROM banks: {_romBankCount}, RAM: {_ramSize} bytes");
         }
 
     }
