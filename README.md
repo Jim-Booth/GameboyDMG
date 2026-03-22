@@ -79,7 +79,7 @@ To use the boot ROM, place `dmg_boot.bin` in the project root directory (the sam
 You can also pass a ROM path directly:
 
 ```bash
-dotnet run --project GameboyEmu.csproj
+dotnet run --project GameboyEmu.csproj -- path/to/game.gb
 ```
 
 ## Project Structure
@@ -87,7 +87,7 @@ dotnet run --project GameboyEmu.csproj
 ```
 Core/
   CPU.cs          - LR35902 CPU with full instruction set
-  MMU.cs          - Memory management unit with MBC1/MBC2 support
+  MMU.cs          - Memory management unit with MBC1/MBC2/MBC3/MBC5 support
   PPU.cs          - Pixel Processing Unit (scanline renderer)
   APU.cs          - Audio Processing Unit (4 channels)
   GameBoy.cs      - Main emulator loop tying all components together
