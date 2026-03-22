@@ -183,8 +183,7 @@ namespace GameboyEmu.Core
                     registers.A = ROTR(registers.A, false, false);
                     return 4;
                 case 0x20:
-                    JRZ((sbyte)memory!.ReadByteFromMemory(registers.PC), false);
-                    return 8;
+                    return JRZ((sbyte)memory!.ReadByteFromMemory(registers.PC), false);
                 case 0x21:
                     registers.HL = memory!.ReadWordFromMemory(registers.PC);
                     registers.PC += 2;
@@ -216,8 +215,7 @@ namespace GameboyEmu.Core
                     DAA();
                     return 4;
                 case 0x28:
-                    JRZ((sbyte)memory!.ReadByteFromMemory(registers.PC), true);
-                    return 12;
+                    return JRZ((sbyte)memory!.ReadByteFromMemory(registers.PC), true);
                 case 0x29:
                     ADDHL(registers.HL);
                     return 8;
@@ -249,8 +247,7 @@ namespace GameboyEmu.Core
                     registers.Flags.H = true;
                     return 4;
                 case 0x30:
-                    JRC((sbyte)memory!.ReadByteFromMemory(registers.PC), false);
-                    return 8;
+                    return JRC((sbyte)memory!.ReadByteFromMemory(registers.PC), false);
                 case 0x31:
                     registers.SP = memory!.ReadWordFromMemory(registers.PC);
                     registers.PC += 2;
@@ -284,8 +281,7 @@ namespace GameboyEmu.Core
                     registers.Flags.H = false;
                     return 4;
                 case 0x38:
-                    JRC((sbyte)memory!.ReadByteFromMemory(registers.PC), true);
-                    return 12;
+                    return JRC((sbyte)memory!.ReadByteFromMemory(registers.PC), true);
                 case 0x39:
                     ADDHL(registers.SP);
                     return 8;
@@ -751,12 +747,12 @@ namespace GameboyEmu.Core
                     return 8;
                 case 0xC9:
                     registers.PC = PopWordFromStack();
-                    return 20;
+                    return 16;
                 case 0xCA:
                     if (registers.Flags.Z)
                     {
                         registers.PC = memory!.ReadWordFromMemory(registers.PC);
-                        return 24;
+                        return 16;
                     }
                     else
                         registers.PC += 2;
@@ -1641,7 +1637,7 @@ namespace GameboyEmu.Core
                 case 0xD9:
                     registers.PC = PopWordFromStack();
                     IME = true;
-                    return 20;
+                    return 16;
                 case 0xDA:
                     if (registers.Flags.C)
                     {
@@ -2025,10 +2021,10 @@ namespace GameboyEmu.Core
             {
                 registers.PC = (uint)((registers.PC) + value);
                 registers.PC += 1;
-                return 3;
+                return 12;
             }
             registers.PC += 1;
-            return 2;
+            return 8;
         }
 
         private int JRC(sbyte value, bool state)
@@ -2037,10 +2033,10 @@ namespace GameboyEmu.Core
             {
                 registers.PC = (ushort)((registers.PC) + value);
                 registers.PC += 1;
-                return 3;
+                return 12;
             }
             registers.PC += 1;
-            return 2;
+            return 8;
         }
 
 
