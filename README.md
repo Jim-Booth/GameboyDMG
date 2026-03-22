@@ -59,6 +59,8 @@ A Game Boy (DMG) emulator written in C# targeting .NET 9.0, using SDL2 for cross
 | Space | Select |
 | Escape | Reset (return to ROM menu) |
 
+> **Tip:** The WASD alternate keys are useful for games like Pinball Dreams where the arrow keys may feel less natural.
+
 ## Requirements
 
 - [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
