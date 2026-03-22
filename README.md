@@ -60,7 +60,7 @@ A Game Boy (DMG) emulator written in C# targeting .NET 9.0, using SDL2 for cross
 
 - [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
 - [SDL2](https://www.libsdl.org/) runtime library installed on your system
-- `dmg_boot.bin` — Game Boy boot ROM (optional, placed in the working directory). If present, the Nintendo logo scroll animation plays on startup. If absent, games start directly.
+- `dmg_boot.bin` — Game Boy boot ROM (optional). If present, the Nintendo logo scroll animation plays on startup. If absent, games start directly. **Not included** due to copyright — you must supply your own.
 
 ## Building & Running
 
@@ -69,7 +69,11 @@ dotnet build GameboyEmu.csproj
 dotnet run --project GameboyEmu.csproj
 ```
 
-Place `.gb` ROM files in a `ROMs/` folder next to the executable (or working directory). The emulator will display a selection menu on launch. You can also pass a ROM path directly:
+Place `.gb` ROM files in a `ROMs/` folder in the project root. The emulator will display a selection menu on launch.
+
+To use the boot ROM, place `dmg_boot.bin` in the project root directory (the same folder as `GameboyEmu.csproj`).
+
+You can also pass a ROM path directly:
 
 ```bash
 dotnet run --project GameboyEmu.csproj
