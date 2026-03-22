@@ -242,10 +242,10 @@ namespace GameboyEmu.Core
 
             int selected = 0;
             int scrollOffset = 0;
-            const int maxVisible = 12; // max ROM entries visible at once
+            const int maxVisible = 10; // max ROM entries visible at once
             const int itemHeight = 10; // pixels per item (font is 7px + 3px gap)
             const int titleY = 4;
-            const int listY = 20;
+            const int listY = 25;
 
             while (IsOpen)
             {
@@ -294,6 +294,8 @@ namespace GameboyEmu.Core
                 // Thin separator line under the title
                 for (int x = 8; x < ScreenWidth - 8; x++)
                     _menuPixBuf[(titleY + 10) * ScreenWidth + x] = ColTitle;
+                for (int x = 8; x < ScreenWidth - 8; x++)
+                    _menuPixBuf[(titleY + 128) * ScreenWidth + x] = ColTitle;
 
                 for (int i = 0; i < maxVisible && (i + scrollOffset) < romNames.Count; i++)
                 {
@@ -323,7 +325,7 @@ namespace GameboyEmu.Core
                 if (scrollOffset > 0)
                     DrawString("^", 76, listY - 9, ColText, 1);
                 if (scrollOffset + maxVisible < romNames.Count)
-                    DrawString("v", 76, listY + maxVisible * itemHeight, ColText, 1);
+                    DrawString("\x7F", 76, listY + maxVisible * itemHeight, ColText, 1);
 
                 // --- Upload buffer to texture & present ---
                 GCHandle pin = GCHandle.Alloc(_menuPixBuf, GCHandleType.Pinned);
@@ -515,6 +517,7 @@ namespace GameboyEmu.Core
             0b00100_00100_00100_00100_00100_00100_00100UL, // 124 '|'
             0b01000_00100_00100_00010_00100_00100_01000UL, // 125 '}'
             0b00000_00000_01000_10101_00010_00000_00000UL, // 126 '~'
+            0b00000_00000_00000_10001_01010_00100_00000UL, // 127 down arrow (inverted ^)
         };
     }
 }
