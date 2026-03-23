@@ -80,30 +80,30 @@ namespace GameboyEmu.Core
         /// </summary>
         public void InitAudio()
         {
-            if (SDL2.SDL_InitSubSystem(SDL2.SDL_INIT_AUDIO) < 0)
+            if (SDL.SDL_InitSubSystem(SDL.SDL_INIT_AUDIO) < 0)
             {
-                Console.WriteLine($"[APU] SDL audio init failed: {Marshal.PtrToStringAnsi(SDL2.SDL_GetError())}");
+                Console.WriteLine($"[APU] SDL audio init failed: {Marshal.PtrToStringAnsi(SDL.SDL_GetError())}");
                 return;
             }
 
-            var desired = new SDL2.SDL_AudioSpec
+            var desired = new SDL.SDL_AudioSpec
             {
                 freq = SampleRate,
-                format = SDL2.AUDIO_F32SYS,
+                format = SDL.AUDIO_F32SYS,
                 channels = 2,
                 samples = AudioBufferSamples,
                 callback = IntPtr.Zero,
                 userdata = IntPtr.Zero,
             };
 
-            _audioDevice = SDL2.SDL_OpenAudioDevice(IntPtr.Zero, 0, ref desired, out _, 0);
+            _audioDevice = SDL.SDL_OpenAudioDevice(IntPtr.Zero, 0, ref desired, out _, 0);
             if (_audioDevice == 0)
             {
-                Console.WriteLine($"[APU] Failed to open audio device: {Marshal.PtrToStringAnsi(SDL2.SDL_GetError())}");
+                Console.WriteLine($"[APU] Failed to open audio device: {Marshal.PtrToStringAnsi(SDL.SDL_GetError())}");
                 return;
             }
 
-            SDL2.SDL_PauseAudioDevice(_audioDevice, 0); // unpause
+            SDL.SDL_PauseAudioDevice(_audioDevice, 0); // unpause
             _audioReady = true;
             Console.WriteLine("[APU] Audio initialised – 44100 Hz stereo float32");
         }
@@ -129,7 +129,7 @@ namespace GameboyEmu.Core
 
             // Clear any queued audio samples
             if (_audioReady)
-                SDL2.SDL_ClearQueuedAudio(_audioDevice);
+                SDL.SDL_ClearQueuedAudio(_audioDevice);
         }
 
         // =====================================================================
@@ -241,13 +241,13 @@ namespace GameboyEmu.Core
 
             // Back-pressure: wait if too much audio is queued (max ~⅛ second)
             uint maxQueued = (uint)(SampleRate * 2 * sizeof(float) / 8);
-            while (SDL2.SDL_GetQueuedAudioSize(_audioDevice) > maxQueued)
+            while (SDL.SDL_GetQueuedAudioSize(_audioDevice) > maxQueued)
                 System.Threading.Thread.Sleep(1);
 
             GCHandle pin = GCHandle.Alloc(_sampleBuf, GCHandleType.Pinned);
             try
             {
-                SDL2.SDL_QueueAudio(_audioDevice, pin.AddrOfPinnedObject(),
+                SDL.SDL_QueueAudio(_audioDevice, pin.AddrOfPinnedObject(),
                     (uint)(_sampleIdx * sizeof(float)));
             }
             finally { pin.Free(); }
@@ -376,7 +376,7 @@ namespace GameboyEmu.Core
         {
             if (_audioReady)
             {
-                SDL2.SDL_CloseAudioDevice(_audioDevice);
+                SDL.SDL_CloseAudioDevice(_audioDevice);
                 _audioReady = false;
             }
             GC.SuppressFinalize(this);

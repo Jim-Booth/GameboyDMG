@@ -23,7 +23,7 @@ namespace GameboyEmu.Core
     ///   Linux:  sudo apt install libsdl2-dev
     ///   Windows: place SDL2.dll next to the executable
     /// </summary>
-    internal static class SDL2
+    public static class SDL
     {
         private const string LibName = "SDL2";
 
@@ -34,7 +34,7 @@ namespace GameboyEmu.Core
         /// </summary>
         public static void RegisterResolver()
         {
-            NativeLibrary.SetDllImportResolver(typeof(SDL2).Assembly, (name, assembly, path) =>
+            NativeLibrary.SetDllImportResolver(typeof(SDL).Assembly, (name, assembly, path) =>
             {
                 if (name != LibName)
                     return IntPtr.Zero;

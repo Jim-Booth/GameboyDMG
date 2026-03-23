@@ -27,7 +27,7 @@ namespace GameboyEmu
             Console.WriteLine("GameBoy Emulator starting...");
 
             // Register native library resolver so SDL2 can be found on all platforms
-            SDL2.RegisterResolver();
+            SDL.RegisterResolver();
 
             using var display = new SDLDisplay();
 
