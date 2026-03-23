@@ -23,7 +23,7 @@ namespace GameboyEmu.Core
     ///   Linux:  sudo apt install libsdl2-dev
     ///   Windows: place SDL2.dll next to the executable
     /// </summary>
-    public static class SDL
+    internal static class SDL
     {
         private const string LibName = "SDL2";
 
