@@ -58,7 +58,7 @@ namespace GameboyEmu.Core
             SDL.SDL_SetHint(SDL.SDL_HINT_RENDER_SCALE_QUALITY, "0");
 
             _window = SDL.SDL_CreateWindow(
-                "GameBoy Emulator",
+                "GameBoy DMG",
                 SDL.SDL_WINDOWPOS_CENTERED,
                 SDL.SDL_WINDOWPOS_CENTERED,
                 ScreenWidth * Scale,
