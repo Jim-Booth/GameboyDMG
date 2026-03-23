@@ -465,7 +465,7 @@ namespace GameboyEmu.Core
             _mbc1AdvancedMode = false;
             _rtcMapped = false;
 
-            Console.WriteLine($"[MMU] Cartridge type: 0x{cartridgeType:X2} → {MapperType}, ROM banks: {_romBankCount}, RAM: {_ramSize} bytes{(_hasBattery ? ", Battery" : "")}");
+            Console.WriteLine($"[MMU] Cartridge type: 0x{cartridgeType:X2} → {MapperType}, ROM banks: {_romBankCount}, RAM: {_ramSize} , Battery: {_hasBattery})");
 
             // Load battery-backed save if present
             if (_hasBattery && _savePath != null)
