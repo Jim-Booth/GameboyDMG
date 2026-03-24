@@ -72,8 +72,9 @@ namespace GameboyEmu.Core
                 throw new Exception($"SDL window creation failed: {error}");
             }
 
-            _renderer = SDL.SDL_CreateRenderer(_window, -1,
-                SDL.SDL_RENDERER_ACCELERATED | SDL.SDL_RENDERER_PRESENTVSYNC);
+            // The emulator owns frame pacing; presenting with vsync would add a
+            // second wall-clock gate that varies with the desktop refresh rate.
+            _renderer = SDL.SDL_CreateRenderer(_window, -1, SDL.SDL_RENDERER_ACCELERATED);
 
             if (_renderer == IntPtr.Zero)
             {

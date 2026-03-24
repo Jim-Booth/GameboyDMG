@@ -12,7 +12,9 @@
 // ============================================================================
 
 using System;
+using System.Diagnostics;
 using System.IO;
+using System.Threading;
 
 #nullable enable
 
@@ -20,6 +22,10 @@ namespace GameboyEmu.Core
 {
     public class GameBoy
     {
+        private const int CpuClockRate = 4194304;
+        private const int CyclesPerFrame = 456 * 154;
+        private static readonly double StopwatchTicksPerCycle = (double)Stopwatch.Frequency / CpuClockRate;
+
         public CPU cPU;
         public MMU mMU;
         public APU aPU;
@@ -41,15 +47,19 @@ namespace GameboyEmu.Core
         public bool ResetRequested { get; set; }
 
         public bool IsRunning { get; set; }
+        private readonly Stopwatch _runTimer = new();
+        private long _emulatedCycles;
+        private int _cyclesUntilPace = CyclesPerFrame;
+        private Action? _onFrameReady;
 
         /// <summary>
-        /// Called at the end of each frame (~59.7 Hz). Hook this up to your
-        /// display to render the screen and poll input.
+        /// Called when a completed frame reaches the paced presentation boundary.
+        /// Hook this up to your display to render the screen and poll input.
         /// </summary>
         public Action? OnFrameReady
         {
-            get => pPU.OnFrameReady;
-            set => pPU.OnFrameReady = value;
+            get => _onFrameReady;
+            set => _onFrameReady = value;
         }
 
         public GameBoy()
@@ -145,8 +155,11 @@ namespace GameboyEmu.Core
         {
             IsRunning = true;
             cPU!.Running = true;
+            _runTimer.Restart();
+            _emulatedCycles = 0;
+            _cyclesUntilPace = CyclesPerFrame;
+            pPU.ConsumeFrameReady();
             int cycles = 0;
-            pPU.StartFrameTimer();
             while (cPU.Running)
             {
                 if (ResetRequested)
@@ -162,21 +175,69 @@ namespace GameboyEmu.Core
                     if ((mMU!.IF & mMU!.IE & 0x1F) != 0)
                     {
                         // HALT exit takes an extra 4 T-cycles before the CPU resumes
-                        UpdateTimers(4);
-                        pPU.Update(4);
-                        aPU.Tick(4);
+                        AdvanceHardware(4);
                     }
                 }
                 else
                     cycles = cPU.Execute(mMU!.ReadByteFromMemory(cPU!.registers.PC++));
-                UpdateTimers(cycles);
-                pPU.Update(cycles);
-                aPU.Tick(cycles);
+                AdvanceHardware(cycles);
                 HandleInterupts();
                 if (_useBootROM && cPU.registers.PC == 0x100)
                     PostBootROMCopy();
             }
             IsRunning = false;
+        }
+
+        private void AdvanceHardware(int cycles)
+        {
+            if (cycles <= 0)
+                return;
+
+            UpdateTimers(cycles);
+            pPU.Update(cycles);
+            aPU.Tick(cycles);
+            if (PaceToRealTime(cycles))
+                PresentCompletedFrame();
+        }
+
+        private bool PaceToRealTime(int cycles)
+        {
+            _emulatedCycles += cycles;
+            _cyclesUntilPace -= cycles;
+            if (_cyclesUntilPace > 0)
+                return false;
+
+            do
+            {
+                _cyclesUntilPace += CyclesPerFrame;
+            }
+            while (_cyclesUntilPace <= 0);
+
+            long targetElapsedTicks = (long)Math.Round(_emulatedCycles * StopwatchTicksPerCycle);
+            while (true)
+            {
+                long remainingTicks = targetElapsedTicks - _runTimer.ElapsedTicks;
+                if (remainingTicks <= 0)
+                    break;
+
+                if (remainingTicks > Stopwatch.Frequency / 500)
+                {
+                    Thread.Sleep(1);
+                    continue;
+                }
+
+                Thread.SpinWait(64);
+            }
+
+            return true;
+        }
+
+        private void PresentCompletedFrame()
+        {
+            if (!pPU.ConsumeFrameReady())
+                return;
+
+            _onFrameReady?.Invoke();
         }
 
         private void UpdateTimers(int cycles)
@@ -233,9 +294,7 @@ namespace GameboyEmu.Core
                     int intCycles = cPU!.ExecuteInterrupt(i);
                     if (intCycles > 0)
                     {
-                        UpdateTimers(intCycles);
-                        pPU.Update(intCycles);
-                        aPU.Tick(intCycles);
+                        AdvanceHardware(intCycles);
                     }
                 }
             }

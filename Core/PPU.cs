@@ -12,17 +12,16 @@
 // ============================================================================
 
 using System;
-using System.Diagnostics;
-
 #nullable enable
 
 namespace GameboyEmu.Core
 {
     public class PPU
     {
+        private const int CyclesPerScanline = 456;
         private readonly MMU _mmu;
 
-        public int ScanLineCounter = 456;
+        public int ScanLineCounter = CyclesPerScanline;
 
         private enum COLOUR { White, LightGray, DarkGray, Black }
 
@@ -39,27 +38,17 @@ namespace GameboyEmu.Core
         private int currentMode3Duration = 172;
         private bool scanLineRendered = false;
         private bool lycWasMatching = false;
-        private readonly Stopwatch frameTimer = new();
 
         // Window internal line counter – only increments on scanlines where
         // the window was actually rendered.  Reset at frame start (VBlank).
         private int windowLineCounter = 0;
         private bool windowWasRenderedThisLine = false;
 
-        /// <summary>
-        /// Called at the end of each frame (~59.7 Hz). Hook this up to your
-        /// display to render the screen and poll input.
-        /// </summary>
-        public Action? OnFrameReady { get; set; }
+        private bool _frameReady;
 
         public PPU(MMU mmu)
         {
             _mmu = mmu;
-        }
-
-        public void StartFrameTimer()
-        {
-            frameTimer.Start();
         }
 
         // ----- Bit helpers (local copies) -----
@@ -94,7 +83,7 @@ namespace GameboyEmu.Core
             if (!IsLCDEnabled())
             {
                 // LCD off: reset scanline state, stay in mode 1 (VBlank)
-                ScanLineCounter = 456;
+                ScanLineCounter = CyclesPerScanline;
                 _mmu.Memory[0xFF44] = 0;
                 scanLineRendered = false;
                 windowLineCounter = 0;
@@ -109,7 +98,7 @@ namespace GameboyEmu.Core
             // Scanline boundary crossed - advance to next line
             if (ScanLineCounter <= 0)
             {
-                ScanLineCounter += 456;
+                ScanLineCounter += CyclesPerScanline;
                 scanLineRendered = false;
 
                 // Advance LY
@@ -119,11 +108,8 @@ namespace GameboyEmu.Core
                 if (_mmu.Memory[0xFF44] == 144)
                 {
                     RequestInterrupt(0);
-                    // All 144 visible lines are complete - present frame
-                    OnFrameReady?.Invoke();
-                    // Frame timing: cap at ~59.7 Hz
-                    while (frameTimer.ElapsedMilliseconds < 16) { }
-                    frameTimer.Restart();
+                    // All 144 visible lines are complete.
+                    _frameReady = true;
                 }
 
                 // Wrap after line 153
@@ -166,6 +152,13 @@ namespace GameboyEmu.Core
             uint address = (uint)(value << 8);
             for (int i = 0; i < 0xA0; i++)
                 _mmu.WriteByteToMemory((uint)(0xFE00 + i), _mmu.ReadByteFromMemory((uint)(address + i)));
+        }
+
+        public bool ConsumeFrameReady()
+        {
+            bool frameReady = _frameReady;
+            _frameReady = false;
+            return frameReady;
         }
 
         // ----- Internal methods -----
