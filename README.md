@@ -85,6 +85,12 @@ You can also pass a ROM path directly:
 dotnet run --project GameboyEmu.csproj -- path/to/game.gb
 ```
 
+To skip the boot ROM animation even when `dmg_boot.bin` is present, use the `--noboot` switch:
+
+```bash
+dotnet run --project GameboyEmu.csproj -- --noboot path/to/game.gb
+```
+
 ## Project Structure
 
 ```

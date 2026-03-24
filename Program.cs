@@ -26,6 +26,10 @@ namespace GameboyEmu
         {
             Console.WriteLine("GameBoy Emulator starting...");
 
+            // Parse --noboot switch
+            bool noBoot = args.Contains("--noboot", StringComparer.OrdinalIgnoreCase);
+            args = args.Where(a => !a.Equals("--noboot", StringComparison.OrdinalIgnoreCase)).ToArray();
+
             // Register native library resolver so SDL2 can be found on all platforms
             SDL.RegisterResolver();
 
@@ -84,7 +88,7 @@ namespace GameboyEmu
                 if (romPath != null)
                 {
                     int romSize = (int)new FileInfo(romPath).Length;
-                    gb.LoadCartridge(romPath, romSize);
+                    gb.LoadCartridge(romPath, romSize, noBoot);
                     Console.WriteLine($"Loaded ROM: {romPath} ({romSize} bytes)");
                 }
                 else

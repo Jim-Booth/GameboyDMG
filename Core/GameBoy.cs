@@ -61,14 +61,14 @@ namespace GameboyEmu.Core
             mMU.Apu = aPU;
         }
 
-        public void LoadCartridge(string path, int size)
+        public void LoadCartridge(string path, int size, bool skipBootROM = false)
         {
             Array.Copy(File.ReadAllBytes(path), 0, mMU!.Cartridge, 0, size);
             Array.Copy(mMU!.Cartridge, 0, mMU!.Memory, 0, 0x8000);
             mMU!.CurrentROMBank = 1;
             mMU!.SetSavePath(path);
 
-            if (File.Exists("dmg_boot.bin"))
+            if (!skipBootROM && File.Exists("dmg_boot.bin"))
             {
                 // Run the boot ROM: back up the first 0xFF bytes of the
                 // cartridge so they can be restored after the boot sequence.
@@ -80,6 +80,8 @@ namespace GameboyEmu.Core
             else
             {
                 // No boot ROM — jump straight to post-boot state.
+                if (skipBootROM)
+                    Console.WriteLine("Boot ROM bypassed (--noboot).");
                 InitialiseGameboyForCartridge(0x100);
                 mMU!.InitROMBanks();
                 _useBootROM = false;
