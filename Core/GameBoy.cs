@@ -61,7 +61,7 @@ namespace GameboyEmu.Core
             mMU.Apu = aPU;
         }
 
-        public void LoadCartridge(string path, int size)
+        public void LoadCartridge(string path, int size, bool skipBootRom = false)
         {
             Array.Copy(File.ReadAllBytes(path), 0, mMU!.Cartridge, 0, size);
             Array.Copy(mMU!.Cartridge, 0, mMU!.Memory, 0, 0x8000);
@@ -70,7 +70,7 @@ namespace GameboyEmu.Core
             // Derive .sav path from the ROM's internal title before InitROMBanks
             mMU!.SetSavePath(path);
 
-            if (File.Exists("dmg_boot.bin"))
+            if (!skipBootRom && File.Exists("dmg_boot.bin"))
             {
                 // Run the boot ROM: back up the first 0xFF bytes of the
                 // cartridge so they can be restored after the boot sequence.
