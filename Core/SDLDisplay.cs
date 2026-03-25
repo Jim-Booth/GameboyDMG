@@ -58,7 +58,7 @@ namespace GameboyEmu.Core
             SDL.SDL_SetHint(SDL.SDL_HINT_RENDER_SCALE_QUALITY, "0");
 
             _window = SDL.SDL_CreateWindow(
-                "GameBoy DMG",
+                "GameBoy Emulator",
                 SDL.SDL_WINDOWPOS_CENTERED,
                 SDL.SDL_WINDOWPOS_CENTERED,
                 ScreenWidth * Scale,
@@ -72,8 +72,9 @@ namespace GameboyEmu.Core
                 throw new Exception($"SDL window creation failed: {error}");
             }
 
-            _renderer = SDL.SDL_CreateRenderer(_window, -1,
-                SDL.SDL_RENDERER_ACCELERATED | SDL.SDL_RENDERER_PRESENTVSYNC);
+            // The emulator owns frame pacing; presenting with vsync would add a
+            // second wall-clock gate that varies with the desktop refresh rate.
+            _renderer = SDL.SDL_CreateRenderer(_window, -1, SDL.SDL_RENDERER_ACCELERATED);
 
             if (_renderer == IntPtr.Zero)
             {
@@ -191,12 +192,12 @@ namespace GameboyEmu.Core
         private static int MapKey(int scancode) => scancode switch
         {
             SDL.SDL_SCANCODE_RIGHT or SDL.SDL_SCANCODE_D => 0,
-            SDL.SDL_SCANCODE_LEFT  or SDL.SDL_SCANCODE_A => 1,
-            SDL.SDL_SCANCODE_UP    or SDL.SDL_SCANCODE_W => 2,
-            SDL.SDL_SCANCODE_DOWN  or SDL.SDL_SCANCODE_S => 3,
-            SDL.SDL_SCANCODE_Z     or SDL.SDL_SCANCODE_M => 4, // A
-            SDL.SDL_SCANCODE_X     or SDL.SDL_SCANCODE_N => 5, // B
-            SDL.SDL_SCANCODE_SPACE  => 6, // Select
+            SDL.SDL_SCANCODE_LEFT or SDL.SDL_SCANCODE_A => 1,
+            SDL.SDL_SCANCODE_UP or SDL.SDL_SCANCODE_W => 2,
+            SDL.SDL_SCANCODE_DOWN or SDL.SDL_SCANCODE_S => 3,
+            SDL.SDL_SCANCODE_Z or SDL.SDL_SCANCODE_M => 4, // A
+            SDL.SDL_SCANCODE_X or SDL.SDL_SCANCODE_N => 5, // B
+            SDL.SDL_SCANCODE_SPACE => 6, // Select
             SDL.SDL_SCANCODE_RETURN => 7, // Start
             _ => -1
         };
@@ -211,11 +212,11 @@ namespace GameboyEmu.Core
         private readonly uint[] _menuPixBuf = new uint[ScreenWidth * ScreenHeight];
 
         // Game-Boy-green palette
-        private const uint ColBg     = 0xFF0F380F; // darkest green  (background)
-        private const uint ColText   = 0xFF9BBC0F; // lightest green (normal text)
-        private const uint ColSel    = 0xFF306230; // dark green     (selection bar)
+        private const uint ColBg = 0xFF0F380F; // darkest green  (background)
+        private const uint ColText = 0xFF9BBC0F; // lightest green (normal text)
+        private const uint ColSel = 0xFF306230; // dark green     (selection bar)
         private const uint ColSelTxt = 0xFF8BAC0F; // bright green   (selected text)
-        private const uint ColTitle  = 0xFF8BAC0F; // title colour
+        private const uint ColTitle = 0xFF8BAC0F; // title colour
 
         /// <summary>
         /// Shows a ROM selection menu rendered inside the SDL window.
@@ -384,9 +385,9 @@ namespace GameboyEmu.Core
             if (!_disposed)
             {
                 if (_menuTexture != IntPtr.Zero) SDL.SDL_DestroyTexture(_menuTexture);
-                if (_texture != IntPtr.Zero)  SDL.SDL_DestroyTexture(_texture);
+                if (_texture != IntPtr.Zero) SDL.SDL_DestroyTexture(_texture);
                 if (_renderer != IntPtr.Zero) SDL.SDL_DestroyRenderer(_renderer);
-                if (_window != IntPtr.Zero)   SDL.SDL_DestroyWindow(_window);
+                if (_window != IntPtr.Zero) SDL.SDL_DestroyWindow(_window);
                 SDL.SDL_Quit();
                 _disposed = true;
             }

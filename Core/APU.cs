@@ -2,7 +2,7 @@
 // Project:     GameboyEmu
 // File:        Core/APU.cs
 // Description: Audio Processing Unit — 4 sound channels, frame sequencer,
-//              stereo mixing, and SDL2 audio output
+//              stereo mixing, and SDL audio output
 // Author:      James Booth
 // Created:     2024
 // License:     MIT License - See LICENSE file in the project root
@@ -21,7 +21,7 @@ namespace GameboyEmu.Core
     /// <summary>
     /// Game Boy Audio Processing Unit.
     /// Emulates all four sound channels, the frame sequencer, and mixing/panning.
-    /// Outputs stereo PCM via SDL2 audio queue.
+    /// Outputs stereo PCM via SDL audio queue.
     ///
     /// Channel 1 – Square wave with frequency sweep  (NR10–NR14, 0xFF10–0xFF14)
     /// Channel 2 – Square wave                       (NR21–NR24, 0xFF16–0xFF19)
@@ -76,7 +76,7 @@ namespace GameboyEmu.Core
         }
 
         /// <summary>
-        /// Opens the SDL2 audio device. Call once after SDL_Init(SDL_INIT_AUDIO).
+        /// Opens the SDL audio device. Call once after SDL_Init(SDL_INIT_AUDIO).
         /// </summary>
         public void InitAudio()
         {

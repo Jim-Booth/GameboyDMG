@@ -26,12 +26,9 @@ namespace GameboyEmu
         {
             Console.WriteLine("GameBoy Emulator starting...");
 
-            // Parse --nobootrom flag and remove it from args so it isn't treated as a ROM path
-            bool noBootRom = args.Contains("--nobootrom", StringComparer.OrdinalIgnoreCase);
-            args = args.Where(a => !a.Equals("--nobootrom", StringComparison.OrdinalIgnoreCase)).ToArray();
-
-            if (noBootRom)
-                Console.WriteLine("Boot ROM skipped (--nobootrom)");
+            // Parse --noboot switch
+            bool noBoot = args.Contains("--noboot", StringComparer.OrdinalIgnoreCase);
+            args = args.Where(a => !a.Equals("--noboot", StringComparison.OrdinalIgnoreCase)).ToArray();
 
             // Register native library resolver so SDL2 can be found on all platforms
             SDL.RegisterResolver();
@@ -91,7 +88,7 @@ namespace GameboyEmu
                 if (romPath != null)
                 {
                     int romSize = (int)new FileInfo(romPath).Length;
-                    gb.LoadCartridge(romPath, romSize, noBootRom);
+                    gb.LoadCartridge(romPath, romSize, noBoot);
                     Console.WriteLine($"Loaded ROM: {romPath} ({romSize} bytes)");
                 }
                 else
@@ -109,10 +106,8 @@ namespace GameboyEmu
                 Console.WriteLine("Controls: Arrows/WASD=D-Pad, Z/M=A, X/N=B, Enter=Start, Space=Select, Esc=Reset");
                 gb.Start();
 
-                // Persist battery-backed save RAM when emulation ends
-                gb.SaveBatteryRAM();
-
                 bool wasReset = gb.ResetRequested;
+                gb.mMU.SaveBattery(); // Save battery-backed RAM before cleanup
                 gb.aPU.Dispose();
 
                 if (!wasReset)

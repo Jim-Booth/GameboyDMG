@@ -42,7 +42,7 @@ namespace GameboyEmu.Core
 
         public int Execute(int opcode)
         {
-    
+
             if (HaltBug)
             {
                 registers.PC--;
