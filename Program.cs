@@ -26,9 +26,9 @@ namespace GameboyEmu
         {
             Console.WriteLine("GameBoy Emulator starting...");
 
-            // Parse --noboot switch
-            bool noBoot = args.Contains("--noboot", StringComparer.OrdinalIgnoreCase);
-            args = args.Where(a => !a.Equals("--noboot", StringComparison.OrdinalIgnoreCase)).ToArray();
+            // Parse --nobootrom switch
+            bool noBoot = args.Contains("--nobootrom", StringComparer.OrdinalIgnoreCase);
+            args = args.Where(a => !a.Equals("--nobootrom", StringComparison.OrdinalIgnoreCase)).ToArray();
 
             // Register native library resolver so SDL2 can be found on all platforms
             SDL.RegisterResolver();

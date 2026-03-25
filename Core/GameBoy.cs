@@ -91,7 +91,7 @@ namespace GameboyEmu.Core
             {
                 // No boot ROM — jump straight to post-boot state.
                 if (skipBootROM)
-                    Console.WriteLine("Boot ROM bypassed (--noboot).");
+                    Console.WriteLine("Boot ROM bypassed (--nobootrom).");
                 InitialiseGameboyForCartridge(0x100);
                 mMU!.InitROMBanks();
                 _useBootROM = false;

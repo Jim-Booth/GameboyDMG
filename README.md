@@ -82,13 +82,13 @@ To use the boot ROM, place `dmg_boot.bin` in the project root directory (the sam
 You can also pass a ROM path directly:
 
 ```bash
-dotnet run --project GameboyEmu.csproj -- path/to/game.gb
+dotnet run --project GameboyEmu.csproj path/to/game.gb
 ```
 
-To skip the boot ROM animation even when `dmg_boot.bin` is present, use the `--noboot` switch:
+To skip the boot ROM animation even when `dmg_boot.bin` is present, use the `--nobootrom` switch:
 
 ```bash
-dotnet run --project GameboyEmu.csproj -- --noboot path/to/game.gb
+dotnet run --project GameboyEmu.csproj --nobootrom path/to/game.gb
 ```
 
 ## Project Structure
