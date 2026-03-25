@@ -37,6 +37,7 @@ A Game Boy (DMG) emulator written in C# targeting .NET 9.0, using SDL2 for cross
 - MBC2 cartridge mapper with built-in 4-bit RAM
 - MBC3 cartridge mapper with ROM/RAM banking and RTC register support
 - MBC5 cartridge mapper with 9-bit ROM bank select (up to 512 banks)
+- Battery-backed save support — automatically detects battery cartridges and persists game saves to `.sav` files alongside the ROM
 - Boot ROM (`dmg_boot.bin`) execution with automatic hand-off to cartridge
 
 ### Input
@@ -82,6 +83,12 @@ You can also pass a ROM path directly:
 
 ```bash
 dotnet run --project GameboyEmu.csproj -- path/to/game.gb
+```
+
+To skip the boot ROM animation even when `dmg_boot.bin` is present, use the `--noboot` switch:
+
+```bash
+dotnet run --project GameboyEmu.csproj -- --noboot path/to/game.gb
 ```
 
 ## Project Structure
