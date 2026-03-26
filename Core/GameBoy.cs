@@ -32,8 +32,6 @@ namespace GameboyEmu.Core
         public APU aPU;
         public PPU pPU;
 
-        public int[,,] LCD { get { return pPU.LCD; } }
-
         private readonly byte[] tempROM = new byte[0xFF];
 
         public int DivCounter;

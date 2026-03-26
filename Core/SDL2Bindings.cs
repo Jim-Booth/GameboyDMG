@@ -90,7 +90,6 @@ namespace GameboyEmu.Core
 
         // --- Renderer flags ---
         public const uint SDL_RENDERER_ACCELERATED = 0x00000002;
-        public const uint SDL_RENDERER_PRESENTVSYNC = 0x00000004;
 
         // --- Pixel format ---
         public const uint SDL_PIXELFORMAT_ARGB8888 = 0x16362004;
@@ -116,7 +115,6 @@ namespace GameboyEmu.Core
         public const int SDL_SCANCODE_LEFT = 80;
         public const int SDL_SCANCODE_RIGHT = 79;
         public const int SDL_SCANCODE_ESCAPE = 41;
-        public const int SDL_SCANCODE_R = 21;
         public const int SDL_SCANCODE_W = 26;
         public const int SDL_SCANCODE_A = 4;
         public const int SDL_SCANCODE_S = 22;
@@ -206,19 +204,7 @@ namespace GameboyEmu.Core
         public static extern int SDL_SetRenderDrawColor(IntPtr renderer, byte r, byte g, byte b, byte a);
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-        public static extern int SDL_RenderFillRect(IntPtr renderer, ref SDL_Rect rect);
-
-        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-        public static extern int SDL_RenderDrawRect(IntPtr renderer, ref SDL_Rect rect);
-
-        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void SDL_Delay(uint ms);
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct SDL_Rect
-        {
-            public int x, y, w, h;
-        }
 
         // --- Audio structs ---
 

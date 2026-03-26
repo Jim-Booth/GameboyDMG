@@ -392,11 +392,6 @@ namespace GameboyEmu.Core
             WriteByteToMemory(addr, (byte)value);
         }
 
-        public void LoadMemory(string filePath, int startAddr, int length)
-        {
-            Array.Copy(File.ReadAllBytes(filePath), 0, Memory, startAddr, length);
-        }
-
         public void InitROMBanks()
         {
             byte cartridgeType = Cartridge[0x0147];

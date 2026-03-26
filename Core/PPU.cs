@@ -37,48 +37,6 @@ namespace GameboyEmu.Core
         /// <summary>Packed ARGB pixel buffer — zero-copy access for the display.</summary>
         public uint[] ScreenBuffer => _screenBuffer;
 
-        /// <summary>
-        /// Returns the screen as int[160,144,3] for backward compatibility.
-        /// Prefer <see cref="ScreenBuffer"/> for zero-copy access.
-        /// </summary>
-        public int[,,] LCD
-        {
-            get
-            {
-                var lcd = new int[Width, Height, 3];
-                for (int y = 0; y < Height; y++)
-                {
-                    for (int x = 0; x < Width; x++)
-                    {
-                        uint argb = _screenBuffer[y * Width + x];
-                        lcd[x, y, 0] = (int)((argb >> 16) & 0xFF);
-                        lcd[x, y, 1] = (int)((argb >> 8) & 0xFF);
-                        lcd[x, y, 2] = (int)(argb & 0xFF);
-                    }
-                }
-                return lcd;
-            }
-        }
-
-        /// <summary>Returns RGBA byte buffer for Blazor canvas rendering.</summary>
-        private readonly byte[] _frameBuffer = new byte[Width * Height * 4];
-        public byte[] FrameBuffer
-        {
-            get
-            {
-                for (int i = 0; i < Width * Height; i++)
-                {
-                    uint argb = _screenBuffer[i];
-                    int di = i * 4;
-                    _frameBuffer[di]     = (byte)((argb >> 16) & 0xFF); // R
-                    _frameBuffer[di + 1] = (byte)((argb >> 8) & 0xFF);  // G
-                    _frameBuffer[di + 2] = (byte)(argb & 0xFF);         // B
-                    _frameBuffer[di + 3] = 255;                          // A
-                }
-                return _frameBuffer;
-            }
-        }
-
         // ---- Pre-computed palette LUT ----
         // For every possible palette register value (0-255) × colour index (0-3)
         // we store the final packed ARGB colour.
