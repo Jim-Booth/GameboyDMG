@@ -1,8 +1,7 @@
 {
   "profiles": {
     "GameboyEmu": {
-      "commandName": "Project",
-      "commandLineArgs": "--nobootrom"
+      "commandName": "Project"
     }
   }
 }
