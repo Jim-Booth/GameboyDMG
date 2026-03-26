@@ -1,6 +1,7 @@
 bin/
 obj/
 ROMs/*.gb
+ROMs/*.sav
 dmg_boot.bin
 /.vs/Gameboy
 /.gitignore
