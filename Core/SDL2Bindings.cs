@@ -204,6 +204,9 @@ namespace GameboyEmu.Core
         public static extern int SDL_SetRenderDrawColor(IntPtr renderer, byte r, byte g, byte b, byte a);
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int SDL_SetTextureBlendMode(IntPtr texture, int blendMode);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void SDL_Delay(uint ms);
 
         // Overload that accepts an explicit destination rectangle

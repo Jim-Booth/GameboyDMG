@@ -48,7 +48,15 @@ namespace GameboyEmu.Core
         private IntPtr _renderer;
         private IntPtr _texture;
         private IntPtr _bgTexture = IntPtr.Zero;
+        private IntPtr _ledTexture = IntPtr.Zero;
         private bool _disposed;
+
+        // LED indicator: centre position in window coords, radius, glow margin
+        private const int LedCx = 101;
+        private const int LedCy = 244;
+        private const int LedRadius = 10;
+        private const int LedGlow = 4;                          // extra pixels for soft halo
+        private const int LedTexSize = (LedRadius + LedGlow) * 2; // 28
 
         public bool IsOpen { get; private set; }
 
@@ -108,6 +116,7 @@ namespace GameboyEmu.Core
 
             SDL.SDL_SetRenderDrawColor(_renderer, 0, 0, 0, 255);
             LoadBackground();
+            CreateLedTexture();
             IsOpen = true;
         }
 
@@ -142,6 +151,58 @@ namespace GameboyEmu.Core
                 Console.WriteLine($"[Display] Background loaded: {bgPath}");
         }
 
+        private void CreateLedTexture()
+        {
+            // Build a 28×28 ARGB pixel map: bright red disc with soft glow halo.
+            // The disc spans radius 10 px; pixels outside that up to +4 px form a
+            // semi-transparent red glow blended at render time.
+            uint[] pixels = new uint[LedTexSize * LedTexSize];
+            int cx = LedTexSize / 2; // 14
+            int cy = LedTexSize / 2; // 14
+
+            for (int py = 0; py < LedTexSize; py++)
+            {
+                for (int px = 0; px < LedTexSize; px++)
+                {
+                    double dx = px - cx;
+                    double dy = py - cy;
+                    double dist = Math.Sqrt(dx * dx + dy * dy);
+
+                    if (dist <= LedRadius)
+                    {
+                        // Interpolate center (near-white red) → edge (saturated red)
+                        double t = dist / LedRadius;
+                        byte g = (byte)(200 * (1.0 - t)); // 200 at centre → 0 at edge
+                        byte b = (byte)(180 * (1.0 - t)); // slight blue tint for warmth
+                        pixels[py * LedTexSize + px] = (uint)(0xFF000000 | (0xFF << 16) | (g << 8) | b);
+                    }
+                    else if (dist <= LedRadius + LedGlow)
+                    {
+                        // Soft outer glow: pure red, alpha fades to zero
+                        double t = (dist - LedRadius) / LedGlow;
+                        byte alpha = (byte)(180 * (1.0 - t * t)); // quadratic fall-off
+                        pixels[py * LedTexSize + px] = (uint)((alpha << 24) | 0x00DD0000);
+                    }
+                    // else transparent (pixel stays 0)
+                }
+            }
+
+            _ledTexture = SDL.SDL_CreateTexture(
+                _renderer,
+                SDL.SDL_PIXELFORMAT_ARGB8888,
+                SDL.SDL_TEXTUREACCESS_STREAMING,
+                LedTexSize, LedTexSize);
+
+            if (_ledTexture == IntPtr.Zero) return;
+
+            // Enable per-pixel alpha blending so the glow composites correctly
+            SDL.SDL_SetTextureBlendMode(_ledTexture, 1); // SDL_BLENDMODE_BLEND
+
+            GCHandle pin = GCHandle.Alloc(pixels, GCHandleType.Pinned);
+            try { SDL.SDL_UpdateTexture(_ledTexture, IntPtr.Zero, pin.AddrOfPinnedObject(), LedTexSize * 4); }
+            finally { pin.Free(); }
+        }
+
         /// <summary>
         /// Uploads the PPU's packed ARGB pixel buffer directly to the GPU texture.
         /// Zero conversion overhead — the PPU writes packed ARGB uint32 values.
@@ -164,6 +225,18 @@ namespace GameboyEmu.Core
             if (_bgTexture != IntPtr.Zero)
                 SDL.SDL_RenderCopy(_renderer, _bgTexture, IntPtr.Zero, IntPtr.Zero); // stretch to full window
             SDL.SDL_RenderCopy(_renderer, _texture, IntPtr.Zero, ref dst);
+            // LED illuminated while a game is running
+            if (_ledTexture != IntPtr.Zero)
+            {
+                var ledDst = new SDL.SDL_Rect
+                {
+                    x = LedCx - LedTexSize / 2,
+                    y = LedCy - LedTexSize / 2,
+                    w = LedTexSize,
+                    h = LedTexSize
+                };
+                SDL.SDL_RenderCopy(_renderer, _ledTexture, IntPtr.Zero, ref ledDst);
+            }
             SDL.SDL_RenderPresent(_renderer);
         }
 
@@ -418,6 +491,7 @@ namespace GameboyEmu.Core
         {
             if (!_disposed)
             {
+                if (_ledTexture != IntPtr.Zero) SDL.SDL_DestroyTexture(_ledTexture);
                 if (_bgTexture != IntPtr.Zero) SDL.SDL_DestroyTexture(_bgTexture);
                 if (_menuTexture != IntPtr.Zero) SDL.SDL_DestroyTexture(_menuTexture);
                 if (_texture != IntPtr.Zero) SDL.SDL_DestroyTexture(_texture);
