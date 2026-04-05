@@ -35,8 +35,6 @@ namespace GameboyEmu
 
             using var display = new SDLDisplay();
 
-            string? bootRomPath = ResolveBootRomPath();
-
             // --- Game session loop: returns to menu on reset ---
             bool keepRunning = true;
             int lastMenuSelected = 0;
@@ -46,12 +44,14 @@ namespace GameboyEmu
                 string? romPath = null;
                 bool skipBootForThisLaunch = false;
                 bool selectedFromCommandLine = false;
+                bool gameRomAvailable = false;
 
                 if (args.Length > 0 && keepRunning)
                 {
                     // Command-line argument takes priority (first iteration only)
                     romPath = args[0];
                     selectedFromCommandLine = true;
+                    gameRomAvailable = File.Exists(romPath);
                     args = Array.Empty<string>(); // clear so subsequent loops show menu
                 }
                 else
@@ -69,6 +69,7 @@ namespace GameboyEmu
 
                         if (romFiles.Count > 0)
                         {
+                            gameRomAvailable = true;
                             var romNames = romFiles
                                 .Select(f => Path.GetFileNameWithoutExtension(f)!)
                                 .ToList();
@@ -97,10 +98,18 @@ namespace GameboyEmu
                 }
 
                 // --- Create GameBoy and load ROM ---
-                if (romPath == null && bootRomPath == null)
+                if (romPath == null)
                 {
-                    const string title = "No ROMs or boot ROM found.";
-                    const string details = "Cannot start emulation without game content.";
+                    if (gameRomAvailable)
+                    {
+                        // ROMs exist, but none selected/launched in this iteration.
+                        keepRunning = false;
+                        break;
+                    }
+
+                    const string title = "No game ROMs found.";
+                    const string details = "Place at least one .gb file in the ROMs folder.";
+
                     Console.WriteLine(title);
                     Console.WriteLine(details);
                     display.ShowStartupError(title, details);
@@ -156,16 +165,6 @@ namespace GameboyEmu
             }
 
             Console.WriteLine("Emulator stopped.");
-        }
-
-        private static string? ResolveBootRomPath()
-        {
-            string local = Path.Combine(AppContext.BaseDirectory, "dmg_boot.bin");
-            if (File.Exists(local))
-                return local;
-
-            const string cwd = "dmg_boot.bin";
-            return File.Exists(cwd) ? cwd : null;
         }
 
         private static bool IsCgbOnlyRom(string romPath, out byte cgbFlag)

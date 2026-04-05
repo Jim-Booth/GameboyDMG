@@ -556,8 +556,8 @@ namespace GameboyEmu.Core
         }
 
         /// <summary>
-        /// Displays a startup error inside the SDL window and briefly keeps the
-        /// window responsive before the caller exits the application.
+        /// Displays a startup error inside the SDL window and keeps the
+        /// window responsive until the user closes the emulator.
         /// </summary>
         public void ShowStartupError(string title, string details)
         {
@@ -579,12 +579,17 @@ namespace GameboyEmu.Core
             for (int x = 8; x < ScreenWidth - 8; x++)
                 _menuPixBuf[22 * ScreenWidth + x] = ColTitle;
 
-            DrawString(title, 8, 32, ColText, 1);
-            DrawString(details, 8, 46, ColText, 1);
-            DrawString("Place ROM .GB files", 8, 74, ColSelTxt, 1);
-            DrawString("in ROMS/ folder, or", 8, 84, ColSelTxt, 1);
-            DrawString("add DMG_BOOT.BIN.", 8, 94, ColSelTxt, 1);
-            DrawString("Closing emulator...", 8, 118, ColText, 1);
+            int textY = 32;
+            textY = DrawWrappedText(title, 8, textY, ColText, 25, 10);
+            textY = DrawWrappedText(details, 8, textY + 4, ColText, 25, 10);
+
+            // Keep guidance text below wrapped error lines to avoid overlap.
+            int helpY = textY + 6;
+            DrawString("Place ROM .GB files", 8, helpY, ColSelTxt, 1);
+            DrawString("in ROMS/ folder.", 8, helpY + 10, ColSelTxt, 1);
+
+            int footerY = helpY + 24;
+            DrawString("Press ESC to quit.", 8, footerY, ColText, 1);
 
             if (_menuTexture != IntPtr.Zero)
             {
@@ -604,9 +609,7 @@ namespace GameboyEmu.Core
                 SDL.SDL_RenderPresent(_renderer);
             }
 
-            SDL.SDL_ShowSimpleMessageBox(SDL.SDL_MESSAGEBOX_ERROR, "GameBoy DMG Emulator", $"{title}\n{details}", _window);
-
-            for (int i = 0; i < 75 && IsOpen; i++)
+            while (IsOpen)
             {
                 while (SDL.SDL_PollEvent(out SDL.SDL_Event e) != 0)
                 {
@@ -615,10 +618,65 @@ namespace GameboyEmu.Core
                         IsOpen = false;
                         break;
                     }
+
+                    if (e.type == SDL.SDL_KEYDOWN && e.key.repeat == 0 && e.key.keysym.scancode == SDL.SDL_SCANCODE_ESCAPE)
+                    {
+                        IsOpen = false;
+                        break;
+                    }
                 }
 
                 SDL.SDL_Delay(16);
             }
+        }
+
+        private int DrawWrappedText(string text, int x, int y, uint colour, int maxChars, int lineHeight)
+        {
+            foreach (string line in WrapWords(text, maxChars))
+            {
+                DrawString(line, x, y, colour, 1);
+                y += lineHeight;
+            }
+
+            return y;
+        }
+
+        private static List<string> WrapWords(string text, int maxChars)
+        {
+            var lines = new List<string>();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                lines.Add(string.Empty);
+                return lines;
+            }
+
+            string[] words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            string current = string.Empty;
+
+            foreach (string word in words)
+            {
+                if (current.Length == 0)
+                {
+                    current = word;
+                    continue;
+                }
+
+                string candidate = current + " " + word;
+                if (candidate.Length <= maxChars)
+                {
+                    current = candidate;
+                }
+                else
+                {
+                    lines.Add(current);
+                    current = word;
+                }
+            }
+
+            if (current.Length > 0)
+                lines.Add(current);
+
+            return lines;
         }
 
         // =============================================================
