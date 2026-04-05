@@ -29,24 +29,26 @@ namespace GameboyEmu.Core
         public bool Running { get; set; } = false;
 
         private bool IME;
-        public bool EnableIME;
+        private int _imeEnableDelay;
 
         private bool Halted;
         public bool IsHalted => Halted;
         private bool HaltBug;
+        private bool _instructionHandledInternally;
 
         public void Reset()
         {
             registers = new Registers();
             Running = true;
             IME = false;
-            EnableIME = false;
+            _imeEnableDelay = 0;
             Halted = false;
             HaltBug = false;
         }
 
         public int Execute(int opcode)
         {
+            _instructionHandledInternally = false;
 
             if (HaltBug)
             {
@@ -69,6 +71,8 @@ namespace GameboyEmu.Core
                     memory.WriteByteToMemory(registers.BC, registers.A);
                     return 8;
                 case 0x03:
+                    if (IsInOamRange(registers.BC))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.BC++;
                     return 8;
                 case 0x04:
@@ -102,6 +106,8 @@ namespace GameboyEmu.Core
                     registers.A = memory.ReadByteFromMemory(registers.BC);
                     return 8;
                 case 0x0B:
+                    if (IsInOamRange(registers.BC))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.BC--;
                     return 8;
                 case 0x0C:
@@ -135,6 +141,8 @@ namespace GameboyEmu.Core
                     memory.WriteByteToMemory(registers.DE, registers.A);
                     return 8;
                 case 0x13:
+                    if (IsInOamRange(registers.DE))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.DE++;
                     return 8;
                 case 0x14:
@@ -167,6 +175,8 @@ namespace GameboyEmu.Core
                     registers.A = memory.ReadByteFromMemory(registers.DE);
                     return 8;
                 case 0x1B:
+                    if (IsInOamRange(registers.DE))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.DE--;
                     return 8;
                 case 0x1C:
@@ -200,6 +210,8 @@ namespace GameboyEmu.Core
                     registers.HL++;
                     return 8;
                 case 0x23:
+                    if (IsInOamRange(registers.HL))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.HL++;
                     return 8;
                 case 0x24:
@@ -227,10 +239,14 @@ namespace GameboyEmu.Core
                     ADDHL(registers.HL);
                     return 8;
                 case 0x2A:
+                    if (IsInOamRange(registers.HL))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
                     registers.A = memory.ReadByteFromMemory(registers.HL);
                     registers.HL++;
                     return 8;
                 case 0x2B:
+                    if (IsInOamRange(registers.HL))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.HL--;
                     return 8;
                 case 0x2C:
@@ -261,33 +277,40 @@ namespace GameboyEmu.Core
                     registers.PC += 2;
                     return 12;
                 case 0x32:
+                    if (IsInOamRange(registers.HL))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
                     memory.WriteByteToMemory(registers.HL, registers.A);
                     registers.HL--;
                     return 8;
                 case 0x33:
+                    if (IsInOamRange(registers.SP))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.SP++;
                     return 8;
                 case 0x34:
-                {
-                    byte val = memory.ReadByteFromMemory(registers.HL);
-                    registers.Flags.SetHalfCarryAdd(val, 1);
-                    val++;
-                    memory.WriteByteToMemory(registers.HL, val);
-                    registers.Flags.UpdateZeroFlag(val);
-                    registers.Flags.N = false;
-                    return 12;
-                }
+                    {
+                        if (ExecuteIncDecHlTimed(increment: true)) return 0;
+                        byte val = memory.ReadByteFromMemory(registers.HL);
+                        registers.Flags.SetHalfCarryAdd(val, 1);
+                        val++;
+                        memory.WriteByteToMemory(registers.HL, val);
+                        registers.Flags.UpdateZeroFlag(val);
+                        registers.Flags.N = false;
+                        return 12;
+                    }
                 case 0x35:
-                {
-                    byte val = memory.ReadByteFromMemory(registers.HL);
-                    registers.Flags.SetHalfCarrySub(val, 1);
-                    val--;
-                    memory.WriteByteToMemory(registers.HL, val);
-                    registers.Flags.UpdateZeroFlag(val);
-                    registers.Flags.N = true;
-                    return 12;
-                }
+                    {
+                        if (ExecuteIncDecHlTimed(increment: false)) return 0;
+                        byte val = memory.ReadByteFromMemory(registers.HL);
+                        registers.Flags.SetHalfCarrySub(val, 1);
+                        val--;
+                        memory.WriteByteToMemory(registers.HL, val);
+                        registers.Flags.UpdateZeroFlag(val);
+                        registers.Flags.N = true;
+                        return 12;
+                    }
                 case 0x36:
+                    if (ExecuteLdHlNTimed()) return 0;
                     memory.WriteByteToMemory(registers.HL, memory.ReadByteFromMemory(registers.PC));
                     registers.PC += 1;
                     return 12;
@@ -302,10 +325,14 @@ namespace GameboyEmu.Core
                     ADDHL(registers.SP);
                     return 8;
                 case 0x3A:
+                    if (IsInOamRange(registers.HL))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
                     registers.A = memory.ReadByteFromMemory(registers.HL);
                     registers.HL--;
                     return 8;
                 case 0x3B:
+                    if (IsInOamRange(registers.SP))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.SP--;
                     return 8;
                 case 0x3C:
@@ -713,6 +740,10 @@ namespace GameboyEmu.Core
                     }
                     return 8;
                 case 0xC1:
+                    if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP + 1))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
+                    if (IsInOamRange(registers.SP + 1))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Read, 2);
                     registers.BC = PopWordFromStack();
                     return 12;
                 case 0xC2:
@@ -738,6 +769,12 @@ namespace GameboyEmu.Core
                         registers.PC += 2;
                     return 12;
                 case 0xC5:
+                    if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP - 1) || IsInOamRange(registers.SP - 2))
+                    {
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 2);
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 3);
+                    }
                     PushWordToStack(registers.BC);
                     return 16;
                 case 0xC6:
@@ -768,7 +805,12 @@ namespace GameboyEmu.Core
                         registers.PC += 2;
                     return 12;
                 case 0xCB:
-                    return ExecuteCB(memory.ReadByteFromMemory(registers.PC++));
+                    {
+                        byte cbOpcode = memory.ReadByteFromMemory(registers.PC++);
+                        if ((cbOpcode & 0x07) == 0x06)
+                            return ExecuteCBTimedHL(cbOpcode);
+                        return ExecuteCB(cbOpcode);
+                    }
                 case 0xCC:
                     if (registers.Flags.Z)
                     {
@@ -777,8 +819,10 @@ namespace GameboyEmu.Core
                         return 24;
                     }
                     else
+                    {
                         registers.PC += 2;
-                    return 12;
+                        return 12;
+                    }
                 case 0xCD:
                     PushWordToStack(registers.PC + 2);
                     registers.PC = memory.ReadWordFromMemory(registers.PC);
@@ -799,6 +843,10 @@ namespace GameboyEmu.Core
                     }
                     return 8;
                 case 0xD1:
+                    if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP + 1))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
+                    if (IsInOamRange(registers.SP + 1))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Read, 2);
                     registers.DE = PopWordFromStack();
                     return 12;
                 case 0xD2:
@@ -821,11 +869,17 @@ namespace GameboyEmu.Core
                         registers.PC += 2;
                     return 12;
                 case 0xD5:
+                    if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP - 1) || IsInOamRange(registers.SP - 2))
+                    {
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 2);
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 3);
+                    }
                     PushWordToStack(registers.DE);
                     return 16;
                 case 0xD6:
                     SUB(memory.ReadByteFromMemory(registers.PC));
-                    registers.PC += 1;
+                    registers.PC++;
                     return 8;
                 case 0xD7:
                     PushWordToStack(registers.PC);
@@ -870,16 +924,28 @@ namespace GameboyEmu.Core
                     registers.PC = 0x18;
                     return 16;
                 case 0xE0:
+                    if (ExecuteLdhAToA8Timed()) return 0;
                     memory.WriteByteToMemory((uint)(memory.ReadByteFromMemory(registers.PC) + 0xFF00), registers.A);
                     registers.PC += 1;
                     return 12;
                 case 0xE1:
+                    if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP + 1))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
+                    if (IsInOamRange(registers.SP + 1))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Read, 2);
                     registers.HL = PopWordFromStack();
                     return 12;
                 case 0xE2:
+                    if (ExecuteLdhAToCTimed()) return 0;
                     memory.WriteByteToMemory((uint)(registers.C + 0xFF00), registers.A);
                     return 8;
                 case 0xE5:
+                    if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP - 1) || IsInOamRange(registers.SP - 2))
+                    {
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 2);
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 3);
+                    }
                     PushWordToStack(registers.HL);
                     return 16;
                 case 0xE6:
@@ -897,6 +963,7 @@ namespace GameboyEmu.Core
                     registers.PC = registers.HL;
                     return 4;
                 case 0xEA:
+                    if (ExecuteLdAToA16Timed()) return 0;
                     memory.WriteByteToMemory(memory.ReadWordFromMemory(registers.PC), registers.A);
                     registers.PC += 2;
                     return 16;
@@ -909,19 +976,32 @@ namespace GameboyEmu.Core
                     registers.PC = 0x28;
                     return 16;
                 case 0xF0:
+                    if (ExecuteLdhAFromA8Timed()) return 0;
                     registers.A = memory.ReadByteFromMemory((uint)(0xFF00 + memory.ReadByteFromMemory(registers.PC)));
                     registers.PC += 1;
                     return 12;
                 case 0xF1:
+                    if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP + 1))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
+                    if (IsInOamRange(registers.SP + 1))
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Read, 2);
                     registers.AF = PopWordFromStack();
                     return 12;
                 case 0xF2:
+                    if (ExecuteLdhAFromCTimed()) return 0;
                     registers.A = memory.ReadByteFromMemory((uint)(0xFF00 + registers.C));
                     return 8;
                 case 0xF3:
                     IME = false;
+                    _imeEnableDelay = 0;
                     return 4;
                 case 0xF5:
+                    if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP - 1) || IsInOamRange(registers.SP - 2))
+                    {
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 2);
+                        gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 3);
+                    }
                     PushWordToStack(registers.AF);
                     return 16;
                 case 0xF6:
@@ -939,11 +1019,13 @@ namespace GameboyEmu.Core
                     registers.SP = registers.HL;
                     return 8;
                 case 0xFA:
+                    if (ExecuteLdAFromA16Timed()) return 0;
                     registers.A = memory.ReadByteFromMemory(memory.ReadWordFromMemory(registers.PC));
                     registers.PC += 2;
                     return 16;
                 case 0xFB:
-                    EnableIME = true;
+                    // EI enables IME after the following instruction completes.
+                    _imeEnableDelay = 2;
                     return 4;
                 case 0xFE:
                     CP(memory.ReadByteFromMemory(registers.PC));
@@ -1517,8 +1599,149 @@ namespace GameboyEmu.Core
 
         public void UpdateIME()
         {
-            IME |= EnableIME;
-            EnableIME = false;
+            if (_imeEnableDelay > 0)
+            {
+                _imeEnableDelay--;
+                if (_imeEnableDelay == 0)
+                    IME = true;
+            }
+        }
+
+        public bool ConsumeInstructionHandledInternally()
+        {
+            bool handled = _instructionHandledInternally;
+            _instructionHandledInternally = false;
+            return handled;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void StepInternal(int cycles)
+        {
+            _instructionHandledInternally = true;
+            gameboy.AdvanceHardwareFromCpu(cycles);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsInOamRange(uint value)
+            => value >= 0xFE00 && value <= 0xFEFF;
+
+        private bool ExecuteLdhAFromA8Timed()
+        {
+            byte offset = memory.ReadByteFromMemory(registers.PC++);
+            StepInternal(12); // complete instruction timing before access
+            registers.A = memory.ReadByteFromMemory((uint)(0xFF00 + offset));
+            return true;
+        }
+
+        private bool ExecuteLdAFromA16Timed()
+        {
+            byte lo = memory.ReadByteFromMemory(registers.PC++);
+            byte hi = memory.ReadByteFromMemory(registers.PC++);
+            StepInternal(8); // setup
+            registers.A = memory.ReadByteFromMemory((uint)(lo | (hi << 8)));
+            StepInternal(8); // remaining cycles
+            return true;
+        }
+
+        private bool ExecuteLdhAToA8Timed()
+        {
+            byte offset = memory.ReadByteFromMemory(registers.PC++);
+            StepInternal(12); // complete instruction timing before access
+            memory.WriteByteToMemory((uint)(0xFF00 + offset), registers.A);
+            return true;
+        }
+
+        private bool ExecuteLdhAToCTimed()
+        {
+            StepInternal(4); // setup
+            memory.WriteByteToMemory((uint)(0xFF00 + registers.C), registers.A);
+            StepInternal(4); // remaining cycles
+            return true;
+        }
+
+        private bool ExecuteLdhAFromCTimed()
+        {
+            StepInternal(4); // setup
+            registers.A = memory.ReadByteFromMemory((uint)(0xFF00 + registers.C));
+            StepInternal(4); // remaining cycles
+            return true;
+        }
+
+        private bool ExecuteLdAToA16Timed()
+        {
+            byte lo = memory.ReadByteFromMemory(registers.PC++);
+            byte hi = memory.ReadByteFromMemory(registers.PC++);
+            StepInternal(8); // setup
+            memory.WriteByteToMemory((uint)(lo | (hi << 8)), registers.A);
+            StepInternal(8); // remaining cycles
+            return true;
+        }
+
+        private bool ExecuteLdHlNTimed()
+        {
+            byte value = memory.ReadByteFromMemory(registers.PC++);
+            StepInternal(4); // setup
+            memory.WriteByteToMemory(registers.HL, value);
+            StepInternal(8); // remaining cycles
+            return true;
+        }
+
+        private bool ExecuteIncDecHlTimed(bool increment)
+        {
+            byte val = memory.ReadByteFromMemory(registers.HL);
+            StepInternal(4); // memory read cycle
+
+            if (increment)
+            {
+                registers.Flags.SetHalfCarryAdd(val, 1);
+                val++;
+                registers.Flags.UpdateZeroFlag(val);
+                registers.Flags.N = false;
+            }
+            else
+            {
+                registers.Flags.SetHalfCarrySub(val, 1);
+                val--;
+                registers.Flags.UpdateZeroFlag(val);
+                registers.Flags.N = true;
+            }
+
+            memory.WriteByteToMemory(registers.HL, val);
+            StepInternal(8); // remaining cycles
+            return true;
+        }
+
+        private int ExecuteCBTimedHL(int cbOpcode)
+        {
+            bool isBitTest = (cbOpcode & 0xC0) == 0x40;
+            StepInternal(4); // alignment cycle
+            byte value = memory.ReadByteFromMemory(registers.HL);
+
+            if (isBitTest)
+            {
+                CompBit(value, (cbOpcode >> 3) & 0x07);
+                StepInternal(8); // remaining cycles
+                return 0;
+            }
+
+            byte newValue = cbOpcode switch
+            {
+                0x06 => RLC(value),
+                0x0E => RRC(value),
+                0x16 => RL(value),
+                0x1E => RR(value),
+                0x26 => SHL(value),
+                0x2E => SHR(value),
+                0x36 => SwapNibble(value),
+                0x3E => SRL(value),
+                >= 0x80 and <= 0xBF => ResBit(value, (cbOpcode >> 3) & 0x07),
+                _ => SetBitVal(value, (cbOpcode >> 3) & 0x07),
+            };
+
+            StepInternal(4); // between read/write
+            memory.WriteByteToMemory(registers.HL, newValue);
+            StepInternal(8); // remaining cycles
+            return 0;
         }
 
         public int ExecuteInterrupt(int b)
@@ -1532,7 +1755,7 @@ namespace GameboyEmu.Core
                 registers.PC = (ushort)(0x40 + (8 * b));
                 IME = false;
                 memory.IF = SetBit(memory.IF, b, 0);
-                return 20; // Interrupt dispatch costs 5 M-cycles (20 T-cycles)
+                return 20;
             }
             return 0;
         }
@@ -1561,7 +1784,8 @@ namespace GameboyEmu.Core
 
         private void Stop()
         {
-            // throw new NotImplementedException();
+            // STOP is encoded as a two-byte instruction (0x10 0x00).
+            registers.PC++;
         }
     }
 }

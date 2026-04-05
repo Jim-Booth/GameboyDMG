@@ -21,6 +21,7 @@ namespace GameboyEmu.Core
     public class PPU
     {
         private const int CyclesPerScanline = 456;
+        private const int LcdEnableLyAdvanceCycles = 452;
         private const int Width = 160;
         private const int Height = 144;
 
@@ -60,6 +61,7 @@ namespace GameboyEmu.Core
         private bool windowWasRenderedThisLine = false;
 
         private bool _frameReady;
+        private int _lcdEnableElapsed = -1;
 
         // ---- Static constructor: build palette LUT once ----
         static PPU()
@@ -106,6 +108,7 @@ namespace GameboyEmu.Core
 
         public void Update(int cycles)
         {
+            // Intentional fast-path alias: PPU owns these register/VRAM/OAM reads in tight loops.
             byte[] mem = _mmu.Memory;
 
             if ((mem[0xFF40] & 0x80) == 0)
@@ -116,7 +119,15 @@ namespace GameboyEmu.Core
                 scanLineRendered = false;
                 windowLineCounter = 0;
                 mem[0xFF41] = (byte)((mem[0xFF41] & 0xFC) | 0x01);
+                _lcdEnableElapsed = -1;
                 return;
+            }
+
+            if (_lcdEnableElapsed >= 0)
+            {
+                _lcdEnableElapsed += cycles;
+                if (_lcdEnableElapsed > CyclesPerScanline)
+                    _lcdEnableElapsed = -1;
             }
 
             ScanLineCounter -= cycles;
@@ -156,12 +167,8 @@ namespace GameboyEmu.Core
                     windowLineCounter++;
                 scanLineRendered = true;
 
-                // Compute variable Mode 3 duration for accurate STAT mode boundaries.
-                int spriteCount = CountSpritesOnLine(mem[0xFF44]);
-                int scxPenalty = mem[0xFF43] & 7;
-                int windowPenalty = windowWasRenderedThisLine ? 6 : 0;
-                currentMode3Duration = 172 + scxPenalty + (spriteCount * 6) + windowPenalty;
-                if (currentMode3Duration > 289) currentMode3Duration = 289;
+                // Compute variable Mode 3 duration using SCX/window/object penalties.
+                currentMode3Duration = ComputeMode3Duration(mem[0xFF44]);
             }
 
             SetLCDStatus();
@@ -179,6 +186,33 @@ namespace GameboyEmu.Core
             bool ready = _frameReady;
             _frameReady = false;
             return ready;
+        }
+
+        public byte ReadLyForCpu()
+        {
+            byte ly = _mmu.Memory[0xFF44];
+            byte reported = ly;
+            if (_lcdEnableElapsed >= LcdEnableLyAdvanceCycles && ly == 0)
+                reported = 1;
+
+            return reported;
+        }
+
+        public void OnLcdcWrite(byte oldValue, byte newValue)
+        {
+            bool wasEnabled = (oldValue & 0x80) != 0;
+            bool nowEnabled = (newValue & 0x80) != 0;
+
+            if (wasEnabled == nowEnabled)
+                return;
+
+            if (!nowEnabled)
+            {
+                _lcdEnableElapsed = -1;
+                return;
+            }
+
+            _lcdEnableElapsed = 0;
         }
 
         // ----- Internal methods -----
@@ -258,6 +292,92 @@ namespace GameboyEmu.Core
                     count++;
             }
             return count;
+        }
+
+        private int ComputeMode3Duration(int scanline)
+        {
+            byte[] mem = _mmu.Memory;
+            byte lcdc = mem[0xFF40];
+
+            int duration = 172;
+            int scx = mem[0xFF43];
+            duration += scx & 7;
+
+            bool windowEnabled = (lcdc & 0x20) != 0 && mem[0xFF4A] <= scanline;
+            int windowX = mem[0xFF4B] - 7;
+            if (windowEnabled && windowX < Width)
+                duration += 6;
+
+            int ysize = (lcdc & 0x04) != 0 ? 16 : 8;
+            Span<int> spriteX = stackalloc int[10];
+            Span<int> spriteOam = stackalloc int[10];
+            int spriteCount = 0;
+
+            for (int sprite = 0; sprite < 40 && spriteCount < 10; sprite++)
+            {
+                int addr = 0xFE00 + sprite * 4;
+                int yPos = mem[addr] - 16;
+                if (scanline >= yPos && scanline < yPos + ysize)
+                {
+                    spriteX[spriteCount] = mem[addr + 1] - 8;
+                    spriteOam[spriteCount] = sprite;
+                    spriteCount++;
+                }
+            }
+
+            // Left-to-right order with ties by OAM index (lowest first).
+            for (int i = 1; i < spriteCount; i++)
+            {
+                int j = i;
+                while (j > 0)
+                {
+                    bool shouldSwap = spriteX[j - 1] > spriteX[j]
+                        || (spriteX[j - 1] == spriteX[j] && spriteOam[j - 1] > spriteOam[j]);
+                    if (!shouldSwap) break;
+                    (spriteX[j], spriteX[j - 1]) = (spriteX[j - 1], spriteX[j]);
+                    (spriteOam[j], spriteOam[j - 1]) = (spriteOam[j - 1], spriteOam[j]);
+                    j--;
+                }
+            }
+
+            bool[] seenTile = new bool[64]; // 32 BG tiles + 32 Window tiles in a scanline
+
+            for (int i = 0; i < spriteCount; i++)
+            {
+                int x = spriteX[i];
+
+                // Pan Docs: OAM X=0 (x=-8) has a fixed 11-dot penalty.
+                if (x == -8)
+                {
+                    duration += 11;
+                    continue;
+                }
+
+                // Entirely off-screen right contributes no penalty.
+                if (x >= Width)
+                    continue;
+
+                int pixelX = x < 0 ? 0 : x;
+                bool useWindow = windowEnabled && pixelX >= windowX;
+                int layerX = useWindow ? pixelX - windowX : pixelX + scx;
+                int tileX = (layerX >> 3) & 31;
+                int tileKey = tileX + (useWindow ? 32 : 0);
+
+                if (!seenTile[tileKey])
+                {
+                    seenTile[tileKey] = true;
+                    int pixelsRightInTile = 7 - (layerX & 7);
+                    int bgWait = pixelsRightInTile - 2;
+                    if (bgWait > 0)
+                        duration += bgWait;
+                }
+
+                duration += 6;
+            }
+
+            if (duration < 172) duration = 172;
+            if (duration > 289) duration = 289;
+            return duration;
         }
 
         private void DrawScanLine()

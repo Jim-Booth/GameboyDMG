@@ -42,11 +42,13 @@ namespace GameboyEmu
             {
                 string? romPath = null;
                 bool skipBootForThisLaunch = false;
+                bool selectedFromCommandLine = false;
 
                 if (args.Length > 0 && keepRunning)
                 {
                     // Command-line argument takes priority (first iteration only)
                     romPath = args[0];
+                    selectedFromCommandLine = true;
                     args = Array.Empty<string>(); // clear so subsequent loops show menu
                 }
                 else
@@ -92,6 +94,14 @@ namespace GameboyEmu
                 }
 
                 // --- Create GameBoy and load ROM ---
+                if (romPath != null && IsCgbOnlyRom(romPath, out byte cgbFlag))
+                {
+                    Console.WriteLine($"Skipping CGB-only ROM in DMG emulator: {romPath} (header CGB flag 0x{cgbFlag:X2}).");
+                    if (selectedFromCommandLine)
+                        keepRunning = false;
+                    continue;
+                }
+
                 var gb = new GameBoy();
                 gb.aPU.InitAudio();
 
@@ -132,6 +142,29 @@ namespace GameboyEmu
             }
 
             Console.WriteLine("Emulator stopped.");
+        }
+
+        private static bool IsCgbOnlyRom(string romPath, out byte cgbFlag)
+        {
+            cgbFlag = 0x00;
+            try
+            {
+                using var fs = File.OpenRead(romPath);
+                if (fs.Length <= 0x143)
+                    return false;
+
+                fs.Position = 0x143;
+                int flag = fs.ReadByte();
+                if (flag < 0)
+                    return false;
+
+                cgbFlag = (byte)flag;
+                return cgbFlag == 0xC0;
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

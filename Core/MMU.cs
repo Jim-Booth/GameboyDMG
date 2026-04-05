@@ -54,7 +54,11 @@ namespace GameboyEmu.Core
         /// <summary>APU instance – set by GameBoy after construction.</summary>
         public APU Apu { get; set; } = null!;
 
-        public byte IF { get { return Memory[0xFF0F]; } set { Memory[0xFF0F] = value; } }// 0xFF0F - Interrupt Flag (R/W)
+        public byte IF
+        {
+            get { return (byte)(Memory[0xFF0F] | 0xE0); }
+            set { Memory[0xFF0F] = (byte)(value | 0xE0); }
+        }// 0xFF0F - Interrupt Flag (R/W)
 
         public byte IE { get { return Memory[0xFFFF]; } set { Memory[0xFFFF] = value; } } // 0xFFFF IE - Interrupt Enable (R/W)       
 
@@ -258,21 +262,22 @@ namespace GameboyEmu.Core
 
             else if (0xFF04 == addr)
             {
-                Memory[0xFF04] = 0;
-                gameboy.DivCounter = 0;
+                gameboy.WriteDiv();
+            }
+
+            else if (addr == 0xFF05)
+            {
+                gameboy.WriteTima(value);
+            }
+
+            else if (addr == 0xFF06)
+            {
+                gameboy.WriteTma(value);
             }
 
             else if (addr == 0xFF07)
             {
-                Memory[addr] = value;
-
-                int clockSpeed = TimerClockSpeeds[value & 0x03];
-
-                if (clockSpeed != gameboy!.TimerCounter)
-                {
-                    gameboy!.TimerVariable = 0;
-                    gameboy!.TimerCounter = clockSpeed;
-                }
+                gameboy.WriteTac(value);
             }
 
 
@@ -281,9 +286,26 @@ namespace GameboyEmu.Core
                 IF = value;
             }
 
+            else if (addr == 0xFF01)
+            {
+                Memory[addr] = value;
+            }
+
+            else if (addr == 0xFF02)
+            {
+                Memory[addr] = value;
+            }
+
             else if (addr >= 0xFF10 && addr <= 0xFF3F) // Audio registers → APU
             {
                 Apu.WriteRegister(addr, value);
+            }
+
+            else if (addr == 0xFF40)
+            {
+                byte oldValue = Memory[0xFF40];
+                Memory[0xFF40] = value;
+                gameboy.OnLcdcWrite(oldValue, value);
             }
 
             else if (addr == 0xFF44)
@@ -292,7 +314,7 @@ namespace GameboyEmu.Core
             }
 
             else if (addr == 0xFF46)
-                gameboy.DMATransfer(value);
+                gameboy.StartDmaTransfer(value);
 
             else if ((addr >= 0xFF4C) && (addr <= 0xFF7F))
             {
@@ -362,6 +384,11 @@ namespace GameboyEmu.Core
             }
 
             else if (addr == 0xFF04) return Memory[0xFF04];
+
+            else if (addr == 0xFF44)
+            {
+                return gameboy.ReadLyForCpu();
+            }
 
             else if (addr >= 0xFF10 && addr <= 0xFF3F) // Audio registers → APU
             {

@@ -56,10 +56,10 @@ namespace GameboyEmu.Core
         private byte _nr51;        // 0xFF25 – channel panning
 
         // ----- Channels -----
-        private readonly SquareSweepChannel _ch1 = new();
-        private readonly SquareChannel _ch2 = new();
-        private readonly WaveChannel _ch3 = new();
-        private readonly NoiseChannel _ch4 = new();
+        private readonly SquareSweepChannel _ch1;
+        private readonly SquareChannel _ch2;
+        private readonly WaveChannel _ch3;
+        private readonly NoiseChannel _ch4;
 
         // ----- SDL audio device -----
         private uint _audioDevice;
@@ -71,6 +71,11 @@ namespace GameboyEmu.Core
 
         public APU()
         {
+            _ch1 = new SquareSweepChannel(() => _fsStep);
+            _ch2 = new SquareChannel(() => _fsStep);
+            _ch3 = new WaveChannel(() => _fsStep);
+            _ch4 = new NoiseChannel(() => _fsStep);
+
             _samplePeriod = (double)CPUClockRate / SampleRate;
             _fsTimer = FrameSequencerPeriod;
             _powered = true;
@@ -310,7 +315,12 @@ namespace GameboyEmu.Core
             {
                 bool next = (value & 0x80) != 0;
                 if (!next && _powered) PowerOff();
-                else if (next && !_powered) _fsStep = 0;
+                else if (next && !_powered)
+                {
+                    // DMG behavior: powering on resets frame sequencer timing state.
+                    _fsStep = 0;
+                    _fsTimer = FrameSequencerPeriod;
+                }
                 _powered = next;
                 return;
             }
@@ -318,8 +328,18 @@ namespace GameboyEmu.Core
             // Wave RAM is always writable
             if (addr is >= 0xFF30 and <= 0xFF3F) { _ch3.WriteWaveRAM(addr, value); return; }
 
-            // All other registers are ignored when powered off
-            if (!_powered) return;
+            // While powered off, DMG still accepts writes to length-load registers.
+            if (!_powered)
+            {
+                switch (addr)
+                {
+                    case 0xFF11: _ch1.LoadLength(value); return;
+                    case 0xFF16: _ch2.LoadLength(value); return;
+                    case 0xFF1B: _ch3.LoadLength(value); return;
+                    case 0xFF20: _ch4.LoadLength(value); return;
+                    default: return;
+                }
+            }
 
             switch (addr)
             {
@@ -367,7 +387,11 @@ namespace GameboyEmu.Core
 
         private void PowerOff()
         {
-            _ch1.Reset(); _ch2.Reset(); _ch3.Reset(); _ch4.Reset();
+            // DMG power-off behavior differs from a full reset.
+            _ch1.PowerOffDmg();
+            _ch2.PowerOffDmg();
+            _ch3.PowerOffDmg();
+            _ch4.PowerOffDmg();
             _nr50 = 0; _nr51 = 0;
             _powered = false;
         }
@@ -514,16 +538,39 @@ namespace GameboyEmu.Core
 
         public void WriteNR11(byte v) { NR11 = v; _lengthCounter = 64 - (v & 0x3F); }
 
+        public void LoadLength(byte v)
+        {
+            _lengthCounter = 64 - (v & 0x3F);
+        }
+
         public void WriteNR12(byte v) { NR12 = v; if ((v & 0xF8) == 0) Enabled = false; }
 
         public void WriteNR13(byte v) { NR13 = v; _frequency = (_frequency & 0x700) | v; }
 
         public void WriteNR14(byte v)
         {
+            bool oldLengthEnabled = _lengthEnabled;
+            bool trigger = (v & 0x80) != 0;
+            bool oddPhase = ((_apuStepProvider?.Invoke() ?? 0) & 1) == 1;
             NR14 = v;
             _frequency = (_frequency & 0xFF) | ((v & 7) << 8);
             _lengthEnabled = (v & 0x40) != 0;
-            if ((v & 0x80) != 0) Trigger();
+
+            // Obscure length behavior: enabling length can immediately clock once
+            // when done during a frame-sequencer half where length won't be clocked next.
+            if (!oldLengthEnabled && _lengthEnabled && oddPhase && !(trigger && _lengthCounter == 0))
+                ClockLength();
+
+            bool lengthWillReloadOnTrigger = _lengthCounter == 0;
+
+            if (trigger)
+            {
+                Trigger();
+                // DMG quirk: triggering with zero length can immediately clock once
+                // if the next frame-sequencer step won't clock length.
+                if (_lengthEnabled && oddPhase && lengthWillReloadOnTrigger)
+                    ClockLength();
+            }
         }
 
         private void Trigger()
@@ -549,6 +596,29 @@ namespace GameboyEmu.Core
             if (_sweepShift > 0) CalcSweepFreq();
 
             if ((NR12 & 0xF8) == 0) Enabled = false; // DAC off
+        }
+
+        private readonly Func<int>? _apuStepProvider;
+
+        public SquareSweepChannel(Func<int>? apuStepProvider = null)
+        {
+            _apuStepProvider = apuStepProvider;
+        }
+
+        public void PowerOffDmg()
+        {
+            // Clear registers but keep length counter state.
+            Enabled = false;
+            NR10 = NR11 = NR12 = NR13 = NR14 = 0;
+            _volume = 0;
+            _freqTimer = 0;
+            _dutyPos = 0;
+            _envTimer = 0;
+            _sweepTimer = 0;
+            _sweepEnabled = false;
+            _shadowFreq = 0;
+            _frequency = 0;
+            _lengthEnabled = false;
         }
 
         public void Reset()
@@ -611,15 +681,30 @@ namespace GameboyEmu.Core
         }
 
         public void WriteNR21(byte v) { NR21 = v; _lengthCounter = 64 - (v & 0x3F); }
+        public void LoadLength(byte v) { _lengthCounter = 64 - (v & 0x3F); }
         public void WriteNR22(byte v) { NR22 = v; if ((v & 0xF8) == 0) Enabled = false; }
         public void WriteNR23(byte v) { NR23 = v; _frequency = (_frequency & 0x700) | v; }
 
         public void WriteNR24(byte v)
         {
+            bool oldLengthEnabled = _lengthEnabled;
+            bool trigger = (v & 0x80) != 0;
+            bool oddPhase = ((_apuStepProvider?.Invoke() ?? 0) & 1) == 1;
             NR24 = v;
             _frequency = (_frequency & 0xFF) | ((v & 7) << 8);
             _lengthEnabled = (v & 0x40) != 0;
-            if ((v & 0x80) != 0) Trigger();
+
+            if (!oldLengthEnabled && _lengthEnabled && oddPhase && !(trigger && _lengthCounter == 0))
+                ClockLength();
+
+            bool lengthWillReloadOnTrigger = _lengthCounter == 0;
+
+            if (trigger)
+            {
+                Trigger();
+                if (_lengthEnabled && oddPhase && lengthWillReloadOnTrigger)
+                    ClockLength();
+            }
         }
 
         private void Trigger()
@@ -632,6 +717,25 @@ namespace GameboyEmu.Core
             _envPeriod = NR22 & 7;
             _envTimer = _envPeriod;
             if ((NR22 & 0xF8) == 0) Enabled = false;
+        }
+
+        private readonly Func<int>? _apuStepProvider;
+
+        public SquareChannel(Func<int>? apuStepProvider = null)
+        {
+            _apuStepProvider = apuStepProvider;
+        }
+
+        public void PowerOffDmg()
+        {
+            Enabled = false;
+            NR21 = NR22 = NR23 = NR24 = 0;
+            _volume = 0;
+            _freqTimer = 0;
+            _dutyPos = 0;
+            _envTimer = 0;
+            _frequency = 0;
+            _lengthEnabled = false;
         }
 
         public void Reset()
@@ -656,14 +760,27 @@ namespace GameboyEmu.Core
         private int _wavePos;
         private int _lengthCounter; private bool _lengthEnabled;
         private int _frequency;
+        private int _waveAccessWindow;
+        private int _waveAccessIndex;
+        private int _waveCorruptIndex;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void TickTimer()
         {
+            if (_waveAccessWindow > 0)
+                _waveAccessWindow--;
+
             if (--_freqTimer <= 0)
             {
                 _freqTimer = (2048 - _frequency) * 2;
+                // Byte being fetched at retrigger-sensitive instant.
+                _waveCorruptIndex = (_wavePos >> 1) & 0x0F;
                 _wavePos = (_wavePos + 1) & 31;
+                // Byte visible to CPU wave RAM accesses during the DMG access window.
+                _waveAccessIndex = (_wavePos >> 1) & 0x0F;
+
+                // DMG allows wave RAM access only briefly after the active byte fetch.
+                _waveAccessWindow = 1;
             }
         }
 
@@ -696,28 +813,113 @@ namespace GameboyEmu.Core
 
         public void WriteNR30(byte v) { NR30 = v; if ((v & 0x80) == 0) Enabled = false; }
         public void WriteNR31(byte v) { NR31 = v; _lengthCounter = 256 - v; }
+        public void LoadLength(byte v) { _lengthCounter = 256 - v; }
         public void WriteNR32(byte v) { NR32 = v; }
         public void WriteNR33(byte v) { NR33 = v; _frequency = (_frequency & 0x700) | v; }
 
         public void WriteNR34(byte v)
         {
+            bool oldLengthEnabled = _lengthEnabled;
+            bool trigger = (v & 0x80) != 0;
+            bool oddPhase = ((_apuStepProvider?.Invoke() ?? 0) & 1) == 1;
             NR34 = v;
             _frequency = (_frequency & 0xFF) | ((v & 7) << 8);
             _lengthEnabled = (v & 0x40) != 0;
-            if ((v & 0x80) != 0) Trigger();
+
+            if (!oldLengthEnabled && _lengthEnabled && oddPhase && !(trigger && _lengthCounter == 0))
+                ClockLength();
+
+            bool lengthWillReloadOnTrigger = _lengthCounter == 0;
+
+            if (trigger)
+            {
+                Trigger();
+                if (_lengthEnabled && oddPhase && lengthWillReloadOnTrigger)
+                    ClockLength();
+            }
         }
 
         private void Trigger()
         {
+            // DMG wave retrigger corruption quirk while already running.
+            if (Enabled && (NR30 & 0x80) != 0 && _waveAccessWindow > 0)
+                CorruptWaveRamOnRetrigger();
+
             Enabled = true;
             if (_lengthCounter == 0) _lengthCounter = 256;
             _freqTimer = (2048 - _frequency) * 2;
             _wavePos = 0;
+            _waveAccessWindow = 0;
+            _waveAccessIndex = 0;
+            _waveCorruptIndex = 0;
             if ((NR30 & 0x80) == 0) Enabled = false;
         }
 
-        public byte ReadWaveRAM(uint addr) => _waveRAM[addr - 0xFF30];
-        public void WriteWaveRAM(uint addr, byte value) => _waveRAM[addr - 0xFF30] = value;
+        public byte ReadWaveRAM(uint addr)
+        {
+            if (Enabled && (NR30 & 0x80) != 0)
+            {
+                if (_waveAccessWindow == 0)
+                    return 0xFF;
+
+                // During the access window, all addresses mirror the currently fetched byte.
+                return _waveRAM[_waveAccessIndex];
+            }
+
+            return _waveRAM[addr - 0xFF30];
+        }
+
+        public void WriteWaveRAM(uint addr, byte value)
+        {
+            if (Enabled && (NR30 & 0x80) != 0)
+            {
+                if (_waveAccessWindow == 0)
+                    return;
+
+                _waveRAM[_waveAccessIndex] = value;
+                return;
+            }
+
+            _waveRAM[addr - 0xFF30] = value;
+        }
+
+        private void CorruptWaveRamOnRetrigger()
+        {
+            int i = _waveCorruptIndex;
+
+            if (i < 4)
+            {
+                _waveRAM[0] = _waveRAM[i];
+                return;
+            }
+
+            int baseIndex = i & ~0x03;
+            _waveRAM[0] = _waveRAM[baseIndex];
+            _waveRAM[1] = _waveRAM[baseIndex + 1];
+            _waveRAM[2] = _waveRAM[baseIndex + 2];
+            _waveRAM[3] = _waveRAM[baseIndex + 3];
+        }
+
+        private readonly Func<int>? _apuStepProvider;
+
+        public WaveChannel(Func<int>? apuStepProvider = null)
+        {
+            _apuStepProvider = apuStepProvider;
+        }
+
+        public void PowerOffDmg()
+        {
+            // Wave RAM and length are preserved on DMG power off, registers are cleared.
+            Enabled = false;
+            NR30 = NR31 = NR32 = NR33 = NR34 = 0;
+            _freqTimer = 0;
+            _wavePos = 0;
+            _waveAccessWindow = 0;
+            _waveAccessIndex = 0;
+            _waveCorruptIndex = 0;
+            _frequency = 0;
+            _lengthEnabled = false;
+        }
 
         public void Reset()
         {
@@ -789,14 +991,29 @@ namespace GameboyEmu.Core
         }
 
         public void WriteNR41(byte v) { NR41 = v; _lengthCounter = 64 - (v & 0x3F); }
+        public void LoadLength(byte v) { _lengthCounter = 64 - (v & 0x3F); }
         public void WriteNR42(byte v) { NR42 = v; if ((v & 0xF8) == 0) Enabled = false; }
         public void WriteNR43(byte v) { NR43 = v; }
 
         public void WriteNR44(byte v)
         {
+            bool oldLengthEnabled = _lengthEnabled;
+            bool trigger = (v & 0x80) != 0;
+            bool oddPhase = ((_apuStepProvider?.Invoke() ?? 0) & 1) == 1;
             NR44 = v;
             _lengthEnabled = (v & 0x40) != 0;
-            if ((v & 0x80) != 0) Trigger();
+
+            if (!oldLengthEnabled && _lengthEnabled && oddPhase && !(trigger && _lengthCounter == 0))
+                ClockLength();
+
+            bool lengthWillReloadOnTrigger = _lengthCounter == 0;
+
+            if (trigger)
+            {
+                Trigger();
+                if (_lengthEnabled && oddPhase && lengthWillReloadOnTrigger)
+                    ClockLength();
+            }
         }
 
         private void Trigger()
@@ -810,6 +1027,27 @@ namespace GameboyEmu.Core
             _envTimer = _envPeriod;
             _lfsr = 0x7FFF;
             if ((NR42 & 0xF8) == 0) Enabled = false;
+        }
+
+        private readonly Func<int>? _apuStepProvider;
+
+        public NoiseChannel(Func<int>? apuStepProvider = null)
+        {
+            _apuStepProvider = apuStepProvider;
+        }
+
+        public void PowerOffDmg()
+        {
+            // Clear most registers but preserve length counter state.
+            Enabled = false;
+            NR41 = 0;
+            NR44 = 0;
+            NR42 = NR43 = 0;
+            _volume = 0;
+            _freqTimer = 0;
+            _envTimer = 0;
+            _lfsr = 0x7FFF;
+            _lengthEnabled = false;
         }
 
         public void Reset()
