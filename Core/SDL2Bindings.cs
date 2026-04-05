@@ -101,6 +101,9 @@ namespace GameboyEmu.Core
         // --- Hint names ---
         public const string SDL_HINT_RENDER_SCALE_QUALITY = "SDL_RENDER_SCALE_QUALITY";
 
+        // --- Message box flags ---
+        public const uint SDL_MESSAGEBOX_ERROR = 0x00000010;
+
         // --- Event types ---
         public const uint SDL_QUIT = 0x100;
         public const uint SDL_KEYDOWN = 0x300;
@@ -214,6 +217,9 @@ namespace GameboyEmu.Core
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void SDL_Delay(uint ms);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        public static extern int SDL_ShowSimpleMessageBox(uint flags, string title, string message, IntPtr window);
 
         // Overload that accepts an explicit destination rectangle
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "SDL_RenderCopy")]

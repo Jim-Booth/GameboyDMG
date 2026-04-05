@@ -35,6 +35,8 @@ namespace GameboyEmu
 
             using var display = new SDLDisplay();
 
+            string? bootRomPath = ResolveBootRomPath();
+
             // --- Game session loop: returns to menu on reset ---
             bool keepRunning = true;
             int lastMenuSelected = 0;
@@ -95,6 +97,17 @@ namespace GameboyEmu
                 }
 
                 // --- Create GameBoy and load ROM ---
+                if (romPath == null && bootRomPath == null)
+                {
+                    const string title = "No ROMs or boot ROM found.";
+                    const string details = "Cannot start emulation without game content.";
+                    Console.WriteLine(title);
+                    Console.WriteLine(details);
+                    display.ShowStartupError(title, details);
+                    keepRunning = false;
+                    break;
+                }
+
                 if (romPath != null && IsCgbOnlyRom(romPath, out byte cgbFlag))
                 {
                     Console.WriteLine($"Skipping CGB-only ROM in DMG emulator: {romPath} (header CGB flag 0x{cgbFlag:X2}).");
@@ -143,6 +156,16 @@ namespace GameboyEmu
             }
 
             Console.WriteLine("Emulator stopped.");
+        }
+
+        private static string? ResolveBootRomPath()
+        {
+            string local = Path.Combine(AppContext.BaseDirectory, "dmg_boot.bin");
+            if (File.Exists(local))
+                return local;
+
+            const string cwd = "dmg_boot.bin";
+            return File.Exists(cwd) ? cwd : null;
         }
 
         private static bool IsCgbOnlyRom(string romPath, out byte cgbFlag)

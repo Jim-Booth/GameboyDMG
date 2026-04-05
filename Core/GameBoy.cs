@@ -276,9 +276,9 @@ namespace GameboyEmu.Core
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void PresentCompletedFrame()
         {
-            if (!pPU.ConsumeFrameReady())
-                return;
-
+            // Always invoke the presentation callback at paced boundaries so
+            // frontend event processing continues even when LCD output is off.
+            pPU.ConsumeFrameReady();
             _onFrameReady?.Invoke();
         }
 

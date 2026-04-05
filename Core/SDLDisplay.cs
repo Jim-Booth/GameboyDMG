@@ -555,6 +555,72 @@ namespace GameboyEmu.Core
             return (null, false, selected, scrollOffset);
         }
 
+        /// <summary>
+        /// Displays a startup error inside the SDL window and briefly keeps the
+        /// window responsive before the caller exits the application.
+        /// </summary>
+        public void ShowStartupError(string title, string details)
+        {
+            if (!IsOpen)
+                return;
+
+            if (_menuTexture == IntPtr.Zero)
+            {
+                _menuTexture = SDL.SDL_CreateTexture(
+                    _renderer,
+                    SDL.SDL_PIXELFORMAT_ARGB8888,
+                    SDL.SDL_TEXTUREACCESS_STREAMING,
+                    ScreenWidth, ScreenHeight);
+            }
+
+            Array.Fill(_menuPixBuf, ColBg);
+            DrawString("STARTUP ERROR", 28, 10, ColTitle, 1);
+
+            for (int x = 8; x < ScreenWidth - 8; x++)
+                _menuPixBuf[22 * ScreenWidth + x] = ColTitle;
+
+            DrawString(title, 8, 32, ColText, 1);
+            DrawString(details, 8, 46, ColText, 1);
+            DrawString("Place ROM .GB files", 8, 74, ColSelTxt, 1);
+            DrawString("in ROMS/ folder, or", 8, 84, ColSelTxt, 1);
+            DrawString("add DMG_BOOT.BIN.", 8, 94, ColSelTxt, 1);
+            DrawString("Closing emulator...", 8, 118, ColText, 1);
+
+            if (_menuTexture != IntPtr.Zero)
+            {
+                GCHandle pin = GCHandle.Alloc(_menuPixBuf, GCHandleType.Pinned);
+                try
+                {
+                    SDL.SDL_UpdateTexture(_menuTexture, IntPtr.Zero,
+                        pin.AddrOfPinnedObject(), ScreenWidth * 4);
+                }
+                finally { pin.Free(); }
+
+                var dst = new SDL.SDL_Rect { x = GameX, y = GameY, w = ScreenWidth * Scale, h = ScreenHeight * Scale };
+                SDL.SDL_RenderClear(_renderer);
+                if (_bgTexture != IntPtr.Zero)
+                    SDL.SDL_RenderCopy(_renderer, _bgTexture, IntPtr.Zero, IntPtr.Zero);
+                SDL.SDL_RenderCopy(_renderer, _menuTexture, IntPtr.Zero, ref dst);
+                SDL.SDL_RenderPresent(_renderer);
+            }
+
+            SDL.SDL_ShowSimpleMessageBox(SDL.SDL_MESSAGEBOX_ERROR, "GameBoy DMG Emulator", $"{title}\n{details}", _window);
+
+            for (int i = 0; i < 75 && IsOpen; i++)
+            {
+                while (SDL.SDL_PollEvent(out SDL.SDL_Event e) != 0)
+                {
+                    if (e.type == SDL.SDL_QUIT)
+                    {
+                        IsOpen = false;
+                        break;
+                    }
+                }
+
+                SDL.SDL_Delay(16);
+            }
+        }
+
         // =============================================================
         //  Minimal 5×7 pixel font (ASCII 32–127)
         // =============================================================
