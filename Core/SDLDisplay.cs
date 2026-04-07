@@ -225,6 +225,7 @@ namespace GameboyEmu.Core
             if (_bgTexture != IntPtr.Zero)
                 SDL.SDL_RenderCopy(_renderer, _bgTexture, IntPtr.Zero, IntPtr.Zero); // stretch to full window
             SDL.SDL_RenderCopy(_renderer, _texture, IntPtr.Zero, ref dst);
+            DrawViewportBevel();
             // LED illuminated while a game is running
             if (_ledTexture != IntPtr.Zero)
             {
@@ -547,12 +548,51 @@ namespace GameboyEmu.Core
                 if (_bgTexture != IntPtr.Zero)
                     SDL.SDL_RenderCopy(_renderer, _bgTexture, IntPtr.Zero, IntPtr.Zero); // stretch to full window
                 SDL.SDL_RenderCopy(_renderer, _menuTexture, IntPtr.Zero, ref dst);
+                DrawViewportBevel();
                 SDL.SDL_RenderPresent(_renderer);
 
                 SDL.SDL_Delay(16); // ~60 fps
             }
 
             return (null, false, selected, scrollOffset);
+        }
+
+        /// <summary>
+        /// Draws a 3-D bevel effect around the game viewport.
+        /// Top and left edges get a translucent dark shadow (inset); bottom and
+        /// right edges get a translucent light highlight (raised).
+        /// </summary>
+        private void DrawViewportBevel()
+        {
+            const int BevelWidth = 4;
+            int vw = ScreenWidth  * Scale;   // viewport pixel width
+            int vh = ScreenHeight * Scale;   // viewport pixel height
+            int x  = GameX;
+            int y  = GameY;
+
+            SDL.SDL_SetRenderDrawBlendMode(_renderer, SDL.SDL_BlendMode.SDL_BLENDMODE_BLEND);
+
+            // --- dark shadow: top and left edges ---
+            SDL.SDL_SetRenderDrawColor(_renderer, 0, 0, 0, 120);
+            for (int i = 0; i < BevelWidth; i++)
+            {
+                // top
+                SDL.SDL_RenderDrawLine(_renderer, x + i, y + i, x + vw - 1 - i, y + i);
+                // left
+                SDL.SDL_RenderDrawLine(_renderer, x + i, y + i, x + i, y + vh - 1 - i);
+            }
+
+            // --- light highlight: bottom and right edges ---
+            SDL.SDL_SetRenderDrawColor(_renderer, 255, 255, 255, 80);
+            for (int i = 0; i < BevelWidth; i++)
+            {
+                // bottom
+                SDL.SDL_RenderDrawLine(_renderer, x + i, y + vh - 1 - i, x + vw - 1 - i, y + vh - 1 - i);
+                // right
+                SDL.SDL_RenderDrawLine(_renderer, x + vw - 1 - i, y + i, x + vw - 1 - i, y + vh - 1 - i);
+            }
+
+            SDL.SDL_SetRenderDrawBlendMode(_renderer, SDL.SDL_BlendMode.SDL_BLENDMODE_NONE);
         }
 
         /// <summary>
