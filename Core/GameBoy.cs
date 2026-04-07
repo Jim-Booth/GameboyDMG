@@ -180,7 +180,6 @@ namespace GameboyEmu.Core
             _emulatedCycles = 0;
             _cyclesUntilPace = CyclesPerFrame;
             pPU.ConsumeFrameReady();
-            int cycles = 0;
             while (cPU.Running)
             {
                 if (ResetRequested)
@@ -193,18 +192,18 @@ namespace GameboyEmu.Core
                 {
                     // HALT runs in 4T idle steps, but if an interrupt is already pending,
                     // wake immediately and let interrupt handling proceed this boundary.
-                    cycles = (mMU!.IF & mMU.IE & 0x1F) != 0 ? 0 : 4;
+                    if ((mMU!.IF & mMU.IE & 0x1F) == 0)
+                        AdvanceHardware(4);
                 }
                 else
                 {
+                    // M-cycle accurate: advance 4T for the opcode fetch, then
+                    // Execute() advances remaining M-cycles internally.
                     byte opcode = mMU!.ReadByteFromMemory(cPU!.registers.PC++);
-                    cycles = cPU.Execute(opcode);
+                    AdvanceHardware(4);
+                    cPU.Execute(opcode);
                 }
 
-                if (cPU.ConsumeInstructionHandledInternally())
-                    cycles = 0;
-
-                AdvanceHardware(cycles);
                 HandleInterupts();
                 if (_useBootROM && cPU.registers.PC == 0x100)
                     PostBootROMCopy();
@@ -385,11 +384,7 @@ namespace GameboyEmu.Core
             {
                 if ((((mMU!.IF & mMU!.IE) >> i) & 0x1) == 1)
                 {
-                    int intCycles = cPU!.ExecuteInterrupt(i);
-                    if (intCycles > 0)
-                    {
-                        AdvanceHardware(intCycles);
-                    }
+                    cPU!.ExecuteInterrupt(i);
                 }
             }
         }

@@ -1,8 +1,9 @@
-﻿// ============================================================================
+// ============================================================================
 // Project:     GameboyEmu
 // File:        Core/CPU.cs
 // Description: LR35902 CPU core - full opcode set, CB-prefixed operations,
-//              IME/HALT behavior, interrupt servicing, and CPU-timed accesses
+//              IME/HALT behavior, interrupt servicing, and M-cycle-accurate
+//              bus accesses for precise memory timing
 // Author:      James Booth
 // Created:     2024
 // License:     MIT License - See LICENSE file in the project root
@@ -31,7 +32,6 @@ namespace GameboyEmu.Core
         private bool Halted;
         public bool IsHalted => Halted;
         private bool HaltBug;
-        private bool _instructionHandledInternally;
 
         public void Reset()
         {
@@ -43,10 +43,76 @@ namespace GameboyEmu.Core
             HaltBug = false;
         }
 
+        // ==================================================================
+        //  M-cycle�accurate bus helpers
+        //  Each bus access takes exactly one M-cycle (4 T-cycles).
+        //  Tick4() is used for internal M-cycles with no bus activity.
+        // ==================================================================
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void Tick4()
+        {
+            gameboy.AdvanceHardwareFromCpu(4);
+        }
+
+        /// <summary>Timed byte read: performs the memory read then advances 4 T-cycles.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private byte ReadByte(uint addr)
+        {
+            byte v = memory.ReadByteFromMemory(addr);
+            Tick4();
+            return v;
+        }
+
+        /// <summary>Timed byte write: performs the memory write then advances 4 T-cycles.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void WriteByte(uint addr, byte value)
+        {
+            memory.WriteByteToMemory(addr, value);
+            Tick4();
+        }
+
+        /// <summary>Timed word read: two consecutive timed byte reads (8 T-cycles total).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private uint ReadWord(uint addr)
+        {
+            byte lo = ReadByte(addr);
+            byte hi = ReadByte(addr + 1);
+            return (uint)(hi << 8 | lo);
+        }
+
+        /// <summary>Timed word write: two consecutive timed byte writes (8 T-cycles total).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void WriteWord(uint addr, uint value)
+        {
+            WriteByte(addr + 1, (byte)(value >> 8));
+            WriteByte(addr, (byte)value);
+        }
+
+        /// <summary>Reads the next byte at PC and increments PC (timed).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private byte FetchByte()
+        {
+            return ReadByte(registers.PC++);
+        }
+
+        /// <summary>Reads the next word at PC and increments PC by 2 (timed).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private uint FetchWord()
+        {
+            byte lo = FetchByte();
+            byte hi = FetchByte();
+            return (uint)(hi << 8 | lo);
+        }
+
+        // ==================================================================
+        //  Execute � all timing is handled internally via Tick4/ReadByte/WriteByte.
+        //  The main loop advances 4T for the opcode fetch, then calls Execute()
+        //  which handles the remaining M-cycles.  Returns 0.
+        // ==================================================================
+
         public int Execute(int opcode)
         {
-            _instructionHandledInternally = false;
-
             if (HaltBug)
             {
                 registers.PC--;
@@ -57,1250 +123,959 @@ namespace GameboyEmu.Core
 
             switch (opcode)
             {
-                case 0x00:
-                    // NOP
-                    return 4;
-                case 0x01:
-                    registers.BC = memory.ReadWordFromMemory(registers.PC);
-                    registers.PC += 2;
-                    return 12;
-                case 0x02:
-                    memory.WriteByteToMemory(registers.BC, registers.A);
-                    return 8;
-                case 0x03:
+                case 0x00: // NOP
+                    return 0;
+                case 0x01: // LD BC,d16
+                    registers.BC = FetchWord();
+                    return 0;
+                case 0x02: // LD (BC),A
+                    WriteByte(registers.BC, registers.A);
+                    return 0;
+                case 0x03: // INC BC
                     if (IsInOamRange(registers.BC))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.BC++;
-                    return 8;
-                case 0x04:
+                    Tick4(); // internal
+                    return 0;
+                case 0x04: // INC B
                     registers.Flags.SetHalfCarryAdd(registers.B, 1);
                     registers.B++;
                     registers.Flags.UpdateZeroFlag(registers.B);
                     registers.Flags.N = false;
-                    return 4;
-                case 0x05:
+                    return 0;
+                case 0x05: // DEC B
                     registers.Flags.SetHalfCarrySub(registers.B, 1);
                     registers.B--;
                     registers.Flags.UpdateZeroFlag(registers.B);
                     registers.Flags.N = true;
-                    return 4;
-                case 0x06:
-                    registers.B = memory.ReadByteFromMemory(registers.PC);
-                    registers.PC += 1;
-                    return 8;
-                case 0x07:
+                    return 0;
+                case 0x06: // LD B,d8
+                    registers.B = FetchByte();
+                    return 0;
+                case 0x07: // RLCA
                     registers.A = RLC(registers.A);
                     registers.Flags.Z = false;
-                    return 4;
-                case 0x08:
-                    memory.WriteWordToMemory(memory.ReadWordFromMemory(registers.PC), registers.SP);
-                    registers.PC += 2;
-                    return 20;
-                case 0x09:
+                    return 0;
+                case 0x08: // LD (a16),SP
+                    {
+                        uint addr = FetchWord();
+                        WriteWord(addr, registers.SP);
+                        return 0;
+                    }
+                case 0x09: // ADD HL,BC
                     ADDHL(registers.BC);
-                    return 8;
-                case 0x0A:
-                    registers.A = memory.ReadByteFromMemory(registers.BC);
-                    return 8;
-                case 0x0B:
+                    Tick4(); // internal
+                    return 0;
+                case 0x0A: // LD A,(BC)
+                    registers.A = ReadByte(registers.BC);
+                    return 0;
+                case 0x0B: // DEC BC
                     if (IsInOamRange(registers.BC))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.BC--;
-                    return 8;
-                case 0x0C:
+                    Tick4(); // internal
+                    return 0;
+                case 0x0C: // INC C
                     registers.Flags.SetHalfCarryAdd(registers.C, 1);
                     registers.C++;
                     registers.Flags.UpdateZeroFlag(registers.C);
                     registers.Flags.N = false;
-                    return 4;
-                case 0x0D:
+                    return 0;
+                case 0x0D: // DEC C
                     registers.Flags.SetHalfCarrySub(registers.C, 1);
                     registers.C--;
                     registers.Flags.UpdateZeroFlag(registers.C);
                     registers.Flags.N = true;
-                    return 4;
-                case 0x0E:
-                    registers.C = memory.ReadByteFromMemory(registers.PC);
-                    registers.PC += 1;
-                    return 8;
-                case 0x0F:
+                    return 0;
+                case 0x0E: // LD C,d8
+                    registers.C = FetchByte();
+                    return 0;
+                case 0x0F: // RRCA
                     registers.A = RRC(registers.A);
                     registers.Flags.Z = false;
-                    return 4;
-                case 0x10:
+                    return 0;
+                case 0x10: // STOP
                     Stop();
-                    return 4;
-                case 0x11:
-                    registers.DE = memory.ReadWordFromMemory(registers.PC);
-                    registers.PC += 2;
-                    return 12;
-                case 0x12:
-                    memory.WriteByteToMemory(registers.DE, registers.A);
-                    return 8;
-                case 0x13:
+                    return 0;
+                case 0x11: // LD DE,d16
+                    registers.DE = FetchWord();
+                    return 0;
+                case 0x12: // LD (DE),A
+                    WriteByte(registers.DE, registers.A);
+                    return 0;
+                case 0x13: // INC DE
                     if (IsInOamRange(registers.DE))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.DE++;
-                    return 8;
-                case 0x14:
+                    Tick4();
+                    return 0;
+                case 0x14: // INC D
                     registers.Flags.SetHalfCarryAdd(registers.D, 1);
                     registers.D++;
                     registers.Flags.UpdateZeroFlag(registers.D);
                     registers.Flags.N = false;
-                    return 4;
-                case 0x15:
+                    return 0;
+                case 0x15: // DEC D
                     registers.Flags.SetHalfCarrySub(registers.D, 1);
                     registers.D--;
                     registers.Flags.UpdateZeroFlag(registers.D);
                     registers.Flags.N = true;
-                    return 4;
-                case 0x16:
-                    registers.D = memory.ReadByteFromMemory(registers.PC);
-                    registers.PC += 1;
-                    return 8;
-                case 0x17:
+                    return 0;
+                case 0x16: // LD D,d8
+                    registers.D = FetchByte();
+                    return 0;
+                case 0x17: // RLA
                     registers.A = RL(registers.A);
                     registers.Flags.Z = false;
-                    return 4;
-                case 0x18:
-                    JRN((sbyte)(memory.ReadByteFromMemory(registers.PC)));
-                    return 12;
-                case 0x19:
+                    return 0;
+                case 0x18: // JR r8
+                    {
+                        sbyte offset = (sbyte)FetchByte();
+                        registers.PC = (uint)(registers.PC + offset);
+                        Tick4(); // internal branch
+                        return 0;
+                    }
+                case 0x19: // ADD HL,DE
                     ADDHL(registers.DE);
-                    return 8;
-                case 0x1A:
-                    registers.A = memory.ReadByteFromMemory(registers.DE);
-                    return 8;
-                case 0x1B:
+                    Tick4();
+                    return 0;
+                case 0x1A: // LD A,(DE)
+                    registers.A = ReadByte(registers.DE);
+                    return 0;
+                case 0x1B: // DEC DE
                     if (IsInOamRange(registers.DE))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.DE--;
-                    return 8;
-                case 0x1C:
+                    Tick4();
+                    return 0;
+                case 0x1C: // INC E
                     registers.Flags.SetHalfCarryAdd(registers.E, 1);
                     registers.E++;
                     registers.Flags.UpdateZeroFlag(registers.E);
                     registers.Flags.N = false;
-                    return 4;
-                case 0x1D:
+                    return 0;
+                case 0x1D: // DEC E
                     registers.Flags.SetHalfCarrySub(registers.E, 1);
                     registers.E--;
                     registers.Flags.UpdateZeroFlag(registers.E);
                     registers.Flags.N = true;
-                    return 4;
-                case 0x1E:
-                    registers.E = memory.ReadByteFromMemory(registers.PC);
-                    registers.PC += 1;
-                    return 8;
-                case 0x1F:
+                    return 0;
+                case 0x1E: // LD E,d8
+                    registers.E = FetchByte();
+                    return 0;
+                case 0x1F: // RRA
                     registers.A = RR(registers.A);
                     registers.Flags.Z = false;
-                    return 4;
-                case 0x20:
-                    return JRZ((sbyte)memory.ReadByteFromMemory(registers.PC), false);
-                case 0x21:
-                    registers.HL = memory.ReadWordFromMemory(registers.PC);
-                    registers.PC += 2;
-                    return 12;
-                case 0x22:
-                    memory.WriteByteToMemory(registers.HL, registers.A);
+                    return 0;
+                case 0x20: // JR NZ,r8
+                    {
+                        sbyte offset = (sbyte)FetchByte();
+                        if (!registers.Flags.Z)
+                        {
+                            registers.PC = (uint)(registers.PC + offset);
+                            Tick4();
+                        }
+                        return 0;
+                    }
+                case 0x21: // LD HL,d16
+                    registers.HL = FetchWord();
+                    return 0;
+                case 0x22: // LD (HL+),A
+                    WriteByte(registers.HL, registers.A);
                     registers.HL++;
-                    return 8;
-                case 0x23:
+                    return 0;
+                case 0x23: // INC HL
                     if (IsInOamRange(registers.HL))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.HL++;
-                    return 8;
-                case 0x24:
+                    Tick4();
+                    return 0;
+                case 0x24: // INC H
                     registers.Flags.SetHalfCarryAdd(registers.H, 1);
                     registers.H++;
                     registers.Flags.UpdateZeroFlag(registers.H);
                     registers.Flags.N = false;
-                    return 4;
-                case 0x25:
+                    return 0;
+                case 0x25: // DEC H
                     registers.Flags.SetHalfCarrySub(registers.H, 1);
                     registers.H--;
                     registers.Flags.UpdateZeroFlag(registers.H);
                     registers.Flags.N = true;
-                    return 4;
-                case 0x26:
-                    registers.H = memory.ReadByteFromMemory(registers.PC);
-                    registers.PC += 1;
-                    return 8;
-                case 0x27:
+                    return 0;
+                case 0x26: // LD H,d8
+                    registers.H = FetchByte();
+                    return 0;
+                case 0x27: // DAA
                     DAA();
-                    return 4;
-                case 0x28:
-                    return JRZ((sbyte)memory.ReadByteFromMemory(registers.PC), true);
-                case 0x29:
+                    return 0;
+                case 0x28: // JR Z,r8
+                    {
+                        sbyte offset = (sbyte)FetchByte();
+                        if (registers.Flags.Z)
+                        {
+                            registers.PC = (uint)(registers.PC + offset);
+                            Tick4();
+                        }
+                        return 0;
+                    }
+                case 0x29: // ADD HL,HL
                     ADDHL(registers.HL);
-                    return 8;
-                case 0x2A:
+                    Tick4();
+                    return 0;
+                case 0x2A: // LD A,(HL+)
                     if (IsInOamRange(registers.HL))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
-                    registers.A = memory.ReadByteFromMemory(registers.HL);
+                    registers.A = ReadByte(registers.HL);
                     registers.HL++;
-                    return 8;
-                case 0x2B:
+                    return 0;
+                case 0x2B: // DEC HL
                     if (IsInOamRange(registers.HL))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.HL--;
-                    return 8;
-                case 0x2C:
+                    Tick4();
+                    return 0;
+                case 0x2C: // INC L
                     registers.Flags.SetHalfCarryAdd(registers.L, 1);
                     registers.L++;
                     registers.Flags.UpdateZeroFlag(registers.L);
                     registers.Flags.N = false;
-                    return 4;
-                case 0x2D:
+                    return 0;
+                case 0x2D: // DEC L
                     registers.Flags.SetHalfCarrySub(registers.L, 1);
                     registers.L--;
                     registers.Flags.UpdateZeroFlag(registers.L);
                     registers.Flags.N = true;
-                    return 4;
-                case 0x2E:
-                    registers.L = memory.ReadByteFromMemory(registers.PC);
-                    registers.PC += 1;
-                    return 8;
-                case 0x2F:
+                    return 0;
+                case 0x2E: // LD L,d8
+                    registers.L = FetchByte();
+                    return 0;
+                case 0x2F: // CPL
                     registers.A = (byte)~registers.A;
                     registers.Flags.N = true;
                     registers.Flags.H = true;
-                    return 4;
-                case 0x30:
-                    return JRC((sbyte)memory.ReadByteFromMemory(registers.PC), false);
-                case 0x31:
-                    registers.SP = memory.ReadWordFromMemory(registers.PC);
-                    registers.PC += 2;
-                    return 12;
-                case 0x32:
+                    return 0;
+                case 0x30: // JR NC,r8
+                    {
+                        sbyte offset = (sbyte)FetchByte();
+                        if (!registers.Flags.C)
+                        {
+                            registers.PC = (uint)(registers.PC + offset);
+                            Tick4();
+                        }
+                        return 0;
+                    }
+                case 0x31: // LD SP,d16
+                    registers.SP = FetchWord();
+                    return 0;
+                case 0x32: // LD (HL-),A
                     if (IsInOamRange(registers.HL))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
-                    memory.WriteByteToMemory(registers.HL, registers.A);
+                    WriteByte(registers.HL, registers.A);
                     registers.HL--;
-                    return 8;
-                case 0x33:
+                    return 0;
+                case 0x33: // INC SP
                     if (IsInOamRange(registers.SP))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.SP++;
-                    return 8;
-                case 0x34:
+                    Tick4();
+                    return 0;
+                case 0x34: // INC (HL)
                     {
-                        if (ExecuteIncDecHlTimed(increment: true)) return 0;
-                        byte val = memory.ReadByteFromMemory(registers.HL);
+                        byte val = ReadByte(registers.HL);
                         registers.Flags.SetHalfCarryAdd(val, 1);
                         val++;
-                        memory.WriteByteToMemory(registers.HL, val);
                         registers.Flags.UpdateZeroFlag(val);
                         registers.Flags.N = false;
-                        return 12;
+                        WriteByte(registers.HL, val);
+                        return 0;
                     }
-                case 0x35:
+                case 0x35: // DEC (HL)
                     {
-                        if (ExecuteIncDecHlTimed(increment: false)) return 0;
-                        byte val = memory.ReadByteFromMemory(registers.HL);
+                        byte val = ReadByte(registers.HL);
                         registers.Flags.SetHalfCarrySub(val, 1);
                         val--;
-                        memory.WriteByteToMemory(registers.HL, val);
                         registers.Flags.UpdateZeroFlag(val);
                         registers.Flags.N = true;
-                        return 12;
+                        WriteByte(registers.HL, val);
+                        return 0;
                     }
-                case 0x36:
-                    if (ExecuteLdHlNTimed()) return 0;
-                    memory.WriteByteToMemory(registers.HL, memory.ReadByteFromMemory(registers.PC));
-                    registers.PC += 1;
-                    return 12;
-                case 0x37:
+                case 0x36: // LD (HL),d8
+                    {
+                        byte val = FetchByte();
+                        WriteByte(registers.HL, val);
+                        return 0;
+                    }
+                case 0x37: // SCF
                     registers.Flags.C = true;
                     registers.Flags.N = false;
                     registers.Flags.H = false;
-                    return 4;
-                case 0x38:
-                    return JRC((sbyte)memory.ReadByteFromMemory(registers.PC), true);
-                case 0x39:
+                    return 0;
+                case 0x38: // JR C,r8
+                    {
+                        sbyte offset = (sbyte)FetchByte();
+                        if (registers.Flags.C)
+                        {
+                            registers.PC = (uint)(registers.PC + offset);
+                            Tick4();
+                        }
+                        return 0;
+                    }
+                case 0x39: // ADD HL,SP
                     ADDHL(registers.SP);
-                    return 8;
-                case 0x3A:
+                    Tick4();
+                    return 0;
+                case 0x3A: // LD A,(HL-)
                     if (IsInOamRange(registers.HL))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
-                    registers.A = memory.ReadByteFromMemory(registers.HL);
+                    registers.A = ReadByte(registers.HL);
                     registers.HL--;
-                    return 8;
-                case 0x3B:
+                    return 0;
+                case 0x3B: // DEC SP
                     if (IsInOamRange(registers.SP))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                     registers.SP--;
-                    return 8;
-                case 0x3C:
+                    Tick4();
+                    return 0;
+                case 0x3C: // INC A
                     registers.Flags.SetHalfCarryAdd(registers.A, 1);
                     registers.A++;
                     registers.Flags.UpdateZeroFlag(registers.A);
                     registers.Flags.N = false;
-                    return 4;
-                case 0x3D:
+                    return 0;
+                case 0x3D: // DEC A
                     registers.Flags.SetHalfCarrySub(registers.A, 1);
                     registers.A--;
                     registers.Flags.UpdateZeroFlag(registers.A);
                     registers.Flags.N = true;
-                    return 4;
-                case 0x3E:
-                    registers.A = memory.ReadByteFromMemory(registers.PC);
-                    registers.PC += 1;
-                    return 8;
-                case 0x3F:
+                    return 0;
+                case 0x3E: // LD A,d8
+                    registers.A = FetchByte();
+                    return 0;
+                case 0x3F: // CCF
                     registers.Flags.C = !registers.Flags.C;
                     registers.Flags.N = false;
                     registers.Flags.H = false;
-                    return 4;
-                case 0x40:
-                    return 4;  // LD B,B — nop
-                case 0x41:
-                    registers.B = registers.C;
-                    return 4;
-                case 0x42:
-                    registers.B = registers.D;
-                    return 4;
-                case 0x43:
-                    registers.B = registers.E;
-                    return 4;
-                case 0x44:
-                    registers.B = registers.H;
-                    return 4;
-                case 0x45:
-                    registers.B = registers.L;
-                    return 4;
-                case 0x46:
-                    registers.B = memory.ReadByteFromMemory(registers.HL);
-                    return 8;
-                case 0x47:
-                    registers.B = registers.A;
-                    return 4;
-                case 0x48:
-                    registers.C = registers.B;
-                    return 4;
-                case 0x49:
-                    return 4;  // LD C,C — nop
-                case 0x4A:
-                    registers.C = registers.D;
-                    return 4;
-                case 0x4B:
-                    registers.C = registers.E;
-                    return 4;
-                case 0x4C:
-                    registers.C = registers.H;
-                    return 4;
-                case 0x4D:
-                    registers.C = registers.L;
-                    return 4;
-                case 0x4E:
-                    registers.C = memory.ReadByteFromMemory(registers.HL);
-                    return 8;
-                case 0x4F:
-                    registers.C = registers.A;
-                    return 4;
-                case 0x50:
-                    registers.D = registers.B;
-                    return 4;
-                case 0x51:
-                    registers.D = registers.C;
-                    return 4;
-                case 0x52:
-                    return 4;  // LD D,D — nop
-                case 0x53:
-                    registers.D = registers.E;
-                    return 4;
-                case 0x54:
-                    registers.D = registers.H;
-                    return 4;
-                case 0x55:
-                    registers.D = registers.L;
-                    return 4;
-                case 0x56:
-                    registers.D = memory.ReadByteFromMemory(registers.HL);
-                    return 8;
-                case 0x57:
-                    registers.D = registers.A;
-                    return 4;
-                case 0x58:
-                    registers.E = registers.B;
-                    return 4;
-                case 0x59:
-                    registers.E = registers.C;
-                    return 4;
-                case 0x5A:
-                    registers.E = registers.D;
-                    return 4;
-                case 0x5B:
-                    return 4;  // LD E,E — nop
-                case 0x5C:
-                    registers.E = registers.H;
-                    return 4;
-                case 0x5D:
-                    registers.E = registers.L;
-                    return 4;
-                case 0x5E:
-                    registers.E = memory.ReadByteFromMemory(registers.HL);
-                    return 8;
-                case 0x5F:
-                    registers.E = registers.A;
-                    return 4;
-                case 0x60:
-                    registers.H = registers.B;
-                    return 4;
-                case 0x61:
-                    registers.H = registers.C;
-                    return 4;
-                case 0x62:
-                    registers.H = registers.D;
-                    return 4;
-                case 0x63:
-                    registers.H = registers.E;
-                    return 4;
-                case 0x64:
-                    return 4;  // LD H,H — nop
-                case 0x65:
-                    registers.H = registers.L;
-                    return 4;
-                case 0x66:
-                    registers.H = memory.ReadByteFromMemory(registers.HL);
-                    return 8;
-                case 0x67:
-                    registers.H = registers.A;
-                    return 4;
-                case 0x68:
-                    registers.L = registers.B;
-                    return 4;
-                case 0x69:
-                    registers.L = registers.C;
-                    return 4;
-                case 0x6A:
-                    registers.L = registers.D;
-                    return 4;
-                case 0x6B:
-                    registers.L = registers.E;
-                    return 4;
-                case 0x6C:
-                    registers.L = registers.H;
-                    return 4;
-                case 0x6D:
-                    return 4;  // LD L,L — nop
-                case 0x6E:
-                    registers.L = memory.ReadByteFromMemory(registers.HL);
-                    return 8;
-                case 0x6F:
-                    registers.L = registers.A;
-                    return 4;
-                case 0x70:
-                    memory.WriteByteToMemory(registers.HL, registers.B);
-                    return 8;
-                case 0x71:
-                    memory.WriteByteToMemory(registers.HL, registers.C);
-                    return 8;
-                case 0x72:
-                    memory.WriteByteToMemory(registers.HL, registers.D);
-                    return 8;
-                case 0x73:
-                    memory.WriteByteToMemory(registers.HL, registers.E);
-                    return 8;
-                case 0x74:
-                    memory.WriteByteToMemory(registers.HL, registers.H);
-                    return 8;
-                case 0x75:
-                    memory.WriteByteToMemory(registers.HL, registers.L);
-                    return 8;
-                case 0x76:
-                    Halt(); return 4;
-                case 0x77:
-                    memory.WriteByteToMemory(registers.HL, registers.A);
-                    return 8;
-                case 0x78:
-                    registers.A = registers.B;
-                    return 4;
-                case 0x79:
-                    registers.A = registers.C;
-                    return 4;
-                case 0x7A:
-                    registers.A = registers.D;
-                    return 4;
-                case 0x7B:
-                    registers.A = registers.E;
-                    return 4;
-                case 0x7C:
-                    registers.A = registers.H;
-                    return 4;
-                case 0x7D:
-                    registers.A = registers.L;
-                    return 4;
-                case 0x7E:
-                    registers.A = memory.ReadByteFromMemory(registers.HL);
-                    return 8;
-                case 0x7F:
-                    return 4;  // LD A,A — nop
-                case 0x80:
-                    ADD(registers.B);
-                    return 4;
-                case 0x81:
-                    ADD(registers.C);
-                    return 4;
-                case 0x82:
-                    ADD(registers.D);
-                    return 4;
-                case 0x83:
-                    ADD(registers.E);
-                    return 4;
-                case 0x84:
-                    ADD(registers.H);
-                    return 4;
-                case 0x85:
-                    ADD(registers.L);
-                    return 4;
-                case 0x86:
-                    ADD(memory.ReadByteFromMemory(registers.HL));
-                    return 8;
-                case 0x87:
-                    ADD(registers.A);
-                    return 4;
-                case 0x88:
-                    ADC(registers.B);
-                    return 4;
-                case 0x89:
-                    ADC(registers.C);
-                    return 4;
-                case 0x8A:
-                    ADC(registers.D);
-                    return 4;
-                case 0x8B:
-                    ADC(registers.E);
-                    return 4;
-                case 0x8C:
-                    ADC(registers.H);
-                    return 4;
-                case 0x8D:
-                    ADC(registers.L);
-                    return 4;
-                case 0x8E:
-                    ADC(memory.ReadByteFromMemory(registers.HL));
-                    return 8;
-                case 0x8F:
-                    ADC(registers.A);
-                    return 4;
-                case 0x90:
-                    SUB(registers.B);
-                    return 4;
-                case 0x91:
-                    SUB(registers.C);
-                    return 4;
-                case 0x92:
-                    SUB(registers.D);
-                    return 4;
-                case 0x93:
-                    SUB(registers.E);
-                    return 4;
-                case 0x94:
-                    SUB(registers.H);
-                    return 4;
-                case 0x95:
-                    SUB(registers.L);
-                    return 4;
-                case 0x96:
-                    SUB(memory.ReadByteFromMemory(registers.HL));
-                    return 8;
-                case 0x97:
-                    SUB(registers.A);
-                    return 4;
-                case 0x98:
-                    SBC(registers.B);
-                    return 4;
-                case 0x99:
-                    SBC(registers.C);
-                    return 4;
-                case 0x9A:
-                    SBC(registers.D);
-                    return 4;
-                case 0x9B:
-                    SBC(registers.E);
-                    return 4;
-                case 0x9C:
-                    SBC(registers.H);
-                    return 4;
-                case 0x9D:
-                    SBC(registers.L);
-                    return 4;
-                case 0x9E:
-                    SBC(memory.ReadByteFromMemory(registers.HL));
-                    return 8;
-                case 0x9F:
-                    SBC(registers.A);
-                    return 4;
-                case 0xA0:
-                    AND(registers.B);
-                    return 4;
-                case 0xA1:
-                    AND(registers.C);
-                    return 4;
-                case 0xA2:
-                    AND(registers.D);
-                    return 4;
-                case 0xA3:
-                    AND(registers.E);
-                    return 4;
-                case 0xA4:
-                    AND(registers.H);
-                    return 4;
-                case 0xA5:
-                    AND(registers.L);
-                    return 4;
-                case 0xA6:
-                    AND(memory.ReadByteFromMemory(registers.HL));
-                    return 8;
-                case 0xA7:
-                    AND(registers.A);
-                    return 4;
-                case 0xA8:
-                    XOR(registers.B);
-                    return 4;
-                case 0xA9:
-                    XOR(registers.C);
-                    return 4;
-                case 0xAA:
-                    XOR(registers.D);
-                    return 4;
-                case 0xAB:
-                    XOR(registers.E);
-                    return 4;
-                case 0xAC:
-                    XOR(registers.H);
-                    return 4;
-                case 0xAD:
-                    XOR(registers.L);
-                    return 4;
-                case 0xAE:
-                    XOR(memory.ReadByteFromMemory(registers.HL));
-                    return 8;
-                case 0xAF:
-                    XOR(registers.A);
-                    return 4;
-                case 0xB0:
-                    OR(registers.B);
-                    return 4;
-                case 0xB1:
-                    OR(registers.C);
-                    return 4;
-                case 0xB2:
-                    OR(registers.D);
-                    return 4;
-                case 0xB3:
-                    OR(registers.E);
-                    return 4;
-                case 0xB4:
-                    OR(registers.H);
-                    return 4;
-                case 0xB5:
-                    OR(registers.L);
-                    return 4;
-                case 0xB6:
-                    OR(memory.ReadByteFromMemory(registers.HL));
-                    return 8;
-                case 0xB7:
-                    OR(registers.A);
-                    return 4;
-                case 0xB8:
-                    CP(registers.B);
-                    return 4;
-                case 0xB9:
-                    CP(registers.C);
-                    return 4;
-                case 0xBA:
-                    CP(registers.D);
-                    return 4;
-                case 0xBB:
-                    CP(registers.E);
-                    return 4;
-                case 0xBC:
-                    CP(registers.H);
-                    return 4;
-                case 0xBD:
-                    CP(registers.L);
-                    return 4;
-                case 0xBE:
-                    CP(memory.ReadByteFromMemory(registers.HL));
-                    return 8;
-                case 0xBF:
-                    CP(registers.A);
-                    return 4;
-                case 0xC0:
+                    return 0;
+                case 0x40: return 0; // LD B,B
+                case 0x41: registers.B = registers.C; return 0;
+                case 0x42: registers.B = registers.D; return 0;
+                case 0x43: registers.B = registers.E; return 0;
+                case 0x44: registers.B = registers.H; return 0;
+                case 0x45: registers.B = registers.L; return 0;
+                case 0x46: registers.B = ReadByte(registers.HL); return 0;
+                case 0x47: registers.B = registers.A; return 0;
+                case 0x48: registers.C = registers.B; return 0;
+                case 0x49: return 0; // LD C,C
+                case 0x4A: registers.C = registers.D; return 0;
+                case 0x4B: registers.C = registers.E; return 0;
+                case 0x4C: registers.C = registers.H; return 0;
+                case 0x4D: registers.C = registers.L; return 0;
+                case 0x4E: registers.C = ReadByte(registers.HL); return 0;
+                case 0x4F: registers.C = registers.A; return 0;
+                case 0x50: registers.D = registers.B; return 0;
+                case 0x51: registers.D = registers.C; return 0;
+                case 0x52: return 0; // LD D,D
+                case 0x53: registers.D = registers.E; return 0;
+                case 0x54: registers.D = registers.H; return 0;
+                case 0x55: registers.D = registers.L; return 0;
+                case 0x56: registers.D = ReadByte(registers.HL); return 0;
+                case 0x57: registers.D = registers.A; return 0;
+                case 0x58: registers.E = registers.B; return 0;
+                case 0x59: registers.E = registers.C; return 0;
+                case 0x5A: registers.E = registers.D; return 0;
+                case 0x5B: return 0; // LD E,E
+                case 0x5C: registers.E = registers.H; return 0;
+                case 0x5D: registers.E = registers.L; return 0;
+                case 0x5E: registers.E = ReadByte(registers.HL); return 0;
+                case 0x5F: registers.E = registers.A; return 0;
+                case 0x60: registers.H = registers.B; return 0;
+                case 0x61: registers.H = registers.C; return 0;
+                case 0x62: registers.H = registers.D; return 0;
+                case 0x63: registers.H = registers.E; return 0;
+                case 0x64: return 0; // LD H,H
+                case 0x65: registers.H = registers.L; return 0;
+                case 0x66: registers.H = ReadByte(registers.HL); return 0;
+                case 0x67: registers.H = registers.A; return 0;
+                case 0x68: registers.L = registers.B; return 0;
+                case 0x69: registers.L = registers.C; return 0;
+                case 0x6A: registers.L = registers.D; return 0;
+                case 0x6B: registers.L = registers.E; return 0;
+                case 0x6C: registers.L = registers.H; return 0;
+                case 0x6D: return 0; // LD L,L
+                case 0x6E: registers.L = ReadByte(registers.HL); return 0;
+                case 0x6F: registers.L = registers.A; return 0;
+                case 0x70: WriteByte(registers.HL, registers.B); return 0;
+                case 0x71: WriteByte(registers.HL, registers.C); return 0;
+                case 0x72: WriteByte(registers.HL, registers.D); return 0;
+                case 0x73: WriteByte(registers.HL, registers.E); return 0;
+                case 0x74: WriteByte(registers.HL, registers.H); return 0;
+                case 0x75: WriteByte(registers.HL, registers.L); return 0;
+                case 0x76: Halt(); return 0; // HALT
+                case 0x77: WriteByte(registers.HL, registers.A); return 0;
+                case 0x78: registers.A = registers.B; return 0;
+                case 0x79: registers.A = registers.C; return 0;
+                case 0x7A: registers.A = registers.D; return 0;
+                case 0x7B: registers.A = registers.E; return 0;
+                case 0x7C: registers.A = registers.H; return 0;
+                case 0x7D: registers.A = registers.L; return 0;
+                case 0x7E: registers.A = ReadByte(registers.HL); return 0;
+                case 0x7F: return 0; // LD A,A
+                case 0x80: ADD(registers.B); return 0;
+                case 0x81: ADD(registers.C); return 0;
+                case 0x82: ADD(registers.D); return 0;
+                case 0x83: ADD(registers.E); return 0;
+                case 0x84: ADD(registers.H); return 0;
+                case 0x85: ADD(registers.L); return 0;
+                case 0x86: ADD(ReadByte(registers.HL)); return 0;
+                case 0x87: ADD(registers.A); return 0;
+                case 0x88: ADC(registers.B); return 0;
+                case 0x89: ADC(registers.C); return 0;
+                case 0x8A: ADC(registers.D); return 0;
+                case 0x8B: ADC(registers.E); return 0;
+                case 0x8C: ADC(registers.H); return 0;
+                case 0x8D: ADC(registers.L); return 0;
+                case 0x8E: ADC(ReadByte(registers.HL)); return 0;
+                case 0x8F: ADC(registers.A); return 0;
+                case 0x90: SUB(registers.B); return 0;
+                case 0x91: SUB(registers.C); return 0;
+                case 0x92: SUB(registers.D); return 0;
+                case 0x93: SUB(registers.E); return 0;
+                case 0x94: SUB(registers.H); return 0;
+                case 0x95: SUB(registers.L); return 0;
+                case 0x96: SUB(ReadByte(registers.HL)); return 0;
+                case 0x97: SUB(registers.A); return 0;
+                case 0x98: SBC(registers.B); return 0;
+                case 0x99: SBC(registers.C); return 0;
+                case 0x9A: SBC(registers.D); return 0;
+                case 0x9B: SBC(registers.E); return 0;
+                case 0x9C: SBC(registers.H); return 0;
+                case 0x9D: SBC(registers.L); return 0;
+                case 0x9E: SBC(ReadByte(registers.HL)); return 0;
+                case 0x9F: SBC(registers.A); return 0;
+                case 0xA0: AND(registers.B); return 0;
+                case 0xA1: AND(registers.C); return 0;
+                case 0xA2: AND(registers.D); return 0;
+                case 0xA3: AND(registers.E); return 0;
+                case 0xA4: AND(registers.H); return 0;
+                case 0xA5: AND(registers.L); return 0;
+                case 0xA6: AND(ReadByte(registers.HL)); return 0;
+                case 0xA7: AND(registers.A); return 0;
+                case 0xA8: XOR(registers.B); return 0;
+                case 0xA9: XOR(registers.C); return 0;
+                case 0xAA: XOR(registers.D); return 0;
+                case 0xAB: XOR(registers.E); return 0;
+                case 0xAC: XOR(registers.H); return 0;
+                case 0xAD: XOR(registers.L); return 0;
+                case 0xAE: XOR(ReadByte(registers.HL)); return 0;
+                case 0xAF: XOR(registers.A); return 0;
+                case 0xB0: OR(registers.B); return 0;
+                case 0xB1: OR(registers.C); return 0;
+                case 0xB2: OR(registers.D); return 0;
+                case 0xB3: OR(registers.E); return 0;
+                case 0xB4: OR(registers.H); return 0;
+                case 0xB5: OR(registers.L); return 0;
+                case 0xB6: OR(ReadByte(registers.HL)); return 0;
+                case 0xB7: OR(registers.A); return 0;
+                case 0xB8: CP(registers.B); return 0;
+                case 0xB9: CP(registers.C); return 0;
+                case 0xBA: CP(registers.D); return 0;
+                case 0xBB: CP(registers.E); return 0;
+                case 0xBC: CP(registers.H); return 0;
+                case 0xBD: CP(registers.L); return 0;
+                case 0xBE: CP(ReadByte(registers.HL)); return 0;
+                case 0xBF: CP(registers.A); return 0;
+                case 0xC0: // RET NZ
+                    Tick4(); // internal condition check
                     if (!registers.Flags.Z)
                     {
-                        registers.PC = PopWordFromStack();
-                        return 20;
+                        registers.PC = TimedPopWord();
+                        Tick4(); // internal
                     }
-                    return 8;
-                case 0xC1:
+                    return 0;
+                case 0xC1: // POP BC
                     if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP + 1))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
                     if (IsInOamRange(registers.SP + 1))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Read, 2);
-                    registers.BC = PopWordFromStack();
-                    return 12;
-                case 0xC2:
-                    if (!registers.Flags.Z)
+                    registers.BC = TimedPopWord();
+                    return 0;
+                case 0xC2: // JP NZ,a16
                     {
-                        registers.PC = memory.ReadWordFromMemory(registers.PC);
-                        return 16;
+                        uint addr = FetchWord();
+                        if (!registers.Flags.Z)
+                        {
+                            registers.PC = addr;
+                            Tick4();
+                        }
+                        return 0;
                     }
-                    else
-                        registers.PC += 2;
-                    return 12;
-                case 0xC3:
-                    registers.PC = memory.ReadWordFromMemory(registers.PC);
-                    return 16;
-                case 0xC4:
-                    if (!registers.Flags.Z)
+                case 0xC3: // JP a16
                     {
-                        PushWordToStack(registers.PC + 2);
-                        registers.PC = memory.ReadWordFromMemory(registers.PC);
-                        return 24;
+                        uint addr = FetchWord();
+                        registers.PC = addr;
+                        Tick4();
+                        return 0;
                     }
-                    else
-                        registers.PC += 2;
-                    return 12;
-                case 0xC5:
+                case 0xC4: // CALL NZ,a16
+                    {
+                        uint addr = FetchWord();
+                        if (!registers.Flags.Z)
+                        {
+                            Tick4(); // internal
+                            TimedPushWord(registers.PC);
+                            registers.PC = addr;
+                        }
+                        return 0;
+                    }
+                case 0xC5: // PUSH BC
                     if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP - 1) || IsInOamRange(registers.SP - 2))
                     {
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 2);
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 3);
                     }
-                    PushWordToStack(registers.BC);
-                    return 16;
-                case 0xC6:
-                    ADD(memory.ReadByteFromMemory(registers.PC));
-                    registers.PC += 1;
-                    return 8;
-                case 0xC7:
-                    PushWordToStack(registers.PC);
+                    Tick4(); // internal
+                    TimedPushWord(registers.BC);
+                    return 0;
+                case 0xC6: // ADD A,d8
+                    ADD(FetchByte());
+                    return 0;
+                case 0xC7: // RST 00H
+                    Tick4(); // internal
+                    TimedPushWord(registers.PC);
                     registers.PC = 0x00;
-                    return 16;
-                case 0xC8:
+                    return 0;
+                case 0xC8: // RET Z
+                    Tick4(); // internal condition check
                     if (registers.Flags.Z)
                     {
-                        registers.PC = PopWordFromStack();
-                        return 20;
+                        registers.PC = TimedPopWord();
+                        Tick4(); // internal
                     }
-                    return 8;
-                case 0xC9:
-                    registers.PC = PopWordFromStack();
-                    return 16;
-                case 0xCA:
-                    if (registers.Flags.Z)
+                    return 0;
+                case 0xC9: // RET
+                    registers.PC = TimedPopWord();
+                    Tick4(); // internal
+                    return 0;
+                case 0xCA: // JP Z,a16
                     {
-                        registers.PC = memory.ReadWordFromMemory(registers.PC);
-                        return 16;
+                        uint addr = FetchWord();
+                        if (registers.Flags.Z)
+                        {
+                            registers.PC = addr;
+                            Tick4();
+                        }
+                        return 0;
                     }
-                    else
-                        registers.PC += 2;
-                    return 12;
-                case 0xCB:
+                case 0xCB: // CB prefix
                     {
-                        byte cbOpcode = memory.ReadByteFromMemory(registers.PC++);
-                        if ((cbOpcode & 0x07) == 0x06)
-                            return ExecuteCBTimedHL(cbOpcode);
-                        return ExecuteCB(cbOpcode);
+                        byte cbOpcode = FetchByte();
+                        ExecuteCB(cbOpcode);
+                        return 0;
                     }
-                case 0xCC:
-                    if (registers.Flags.Z)
+                case 0xCC: // CALL Z,a16
                     {
-                        PushWordToStack(registers.PC + 2);
-                        registers.PC = memory.ReadWordFromMemory(registers.PC);
-                        return 24;
+                        uint addr = FetchWord();
+                        if (registers.Flags.Z)
+                        {
+                            Tick4(); // internal
+                            TimedPushWord(registers.PC);
+                            registers.PC = addr;
+                        }
+                        return 0;
                     }
-                    else
+                case 0xCD: // CALL a16
                     {
-                        registers.PC += 2;
-                        return 12;
+                        uint addr = FetchWord();
+                        Tick4(); // internal
+                        TimedPushWord(registers.PC);
+                        registers.PC = addr;
+                        return 0;
                     }
-                case 0xCD:
-                    PushWordToStack(registers.PC + 2);
-                    registers.PC = memory.ReadWordFromMemory(registers.PC);
-                    return 24;
-                case 0xCE:
-                    ADC(memory.ReadByteFromMemory(registers.PC));
-                    registers.PC += 1;
-                    return 8;
-                case 0xCF:
-                    PushWordToStack(registers.PC);
+                case 0xCE: // ADC A,d8
+                    ADC(FetchByte());
+                    return 0;
+                case 0xCF: // RST 08H
+                    Tick4();
+                    TimedPushWord(registers.PC);
                     registers.PC = 0x08;
-                    return 16;
-                case 0xD0:
+                    return 0;
+                case 0xD0: // RET NC
+                    Tick4();
                     if (!registers.Flags.C)
                     {
-                        registers.PC = PopWordFromStack();
-                        return 20;
+                        registers.PC = TimedPopWord();
+                        Tick4();
                     }
-                    return 8;
-                case 0xD1:
+                    return 0;
+                case 0xD1: // POP DE
                     if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP + 1))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
                     if (IsInOamRange(registers.SP + 1))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Read, 2);
-                    registers.DE = PopWordFromStack();
-                    return 12;
-                case 0xD2:
-                    if (!registers.Flags.C)
+                    registers.DE = TimedPopWord();
+                    return 0;
+                case 0xD2: // JP NC,a16
                     {
-                        registers.PC = memory.ReadWordFromMemory(registers.PC);
-                        return 16;
+                        uint addr = FetchWord();
+                        if (!registers.Flags.C)
+                        {
+                            registers.PC = addr;
+                            Tick4();
+                        }
+                        return 0;
                     }
-                    else
-                        registers.PC += 2;
-                    return 12;
-                case 0xD4:
-                    if (!registers.Flags.C)
+                case 0xD4: // CALL NC,a16
                     {
-                        PushWordToStack(registers.PC + 2);
-                        registers.PC = memory.ReadWordFromMemory(registers.PC);
-                        return 24;
+                        uint addr = FetchWord();
+                        if (!registers.Flags.C)
+                        {
+                            Tick4();
+                            TimedPushWord(registers.PC);
+                            registers.PC = addr;
+                        }
+                        return 0;
                     }
-                    else
-                        registers.PC += 2;
-                    return 12;
-                case 0xD5:
+                case 0xD5: // PUSH DE
                     if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP - 1) || IsInOamRange(registers.SP - 2))
                     {
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 2);
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 3);
                     }
-                    PushWordToStack(registers.DE);
-                    return 16;
-                case 0xD6:
-                    SUB(memory.ReadByteFromMemory(registers.PC));
-                    registers.PC++;
-                    return 8;
-                case 0xD7:
-                    PushWordToStack(registers.PC);
+                    Tick4();
+                    TimedPushWord(registers.DE);
+                    return 0;
+                case 0xD6: // SUB d8
+                    SUB(FetchByte());
+                    return 0;
+                case 0xD7: // RST 10H
+                    Tick4();
+                    TimedPushWord(registers.PC);
                     registers.PC = 0x10;
-                    return 16;
-                case 0xD8:
+                    return 0;
+                case 0xD8: // RET C
+                    Tick4();
                     if (registers.Flags.C)
                     {
-                        registers.PC = PopWordFromStack();
-                        return 20;
+                        registers.PC = TimedPopWord();
+                        Tick4();
                     }
-                    return 8;
-                case 0xD9:
-                    registers.PC = PopWordFromStack();
+                    return 0;
+                case 0xD9: // RETI
+                    registers.PC = TimedPopWord();
+                    Tick4();
                     IME = true;
-                    return 16;
-                case 0xDA:
-                    if (registers.Flags.C)
+                    return 0;
+                case 0xDA: // JP C,a16
                     {
-                        registers.PC = memory.ReadWordFromMemory(registers.PC);
-                        return 16;
+                        uint addr = FetchWord();
+                        if (registers.Flags.C)
+                        {
+                            registers.PC = addr;
+                            Tick4();
+                        }
+                        return 0;
                     }
-                    else
-                        registers.PC += 2;
-                    return 12;
-                case 0xDC:
-                    if (registers.Flags.C)
+                case 0xDC: // CALL C,a16
                     {
-                        PushWordToStack(registers.PC + 2);
-                        registers.PC = memory.ReadWordFromMemory(registers.PC);
-                        return 24;
+                        uint addr = FetchWord();
+                        if (registers.Flags.C)
+                        {
+                            Tick4();
+                            TimedPushWord(registers.PC);
+                            registers.PC = addr;
+                        }
+                        return 0;
                     }
-                    else
-                        registers.PC += 2;
-                    return 12;
-                case 0xDE:
-                    SBC(memory.ReadByteFromMemory(registers.PC));
-                    registers.PC++;
-                    return 8;
-                case 0xDF:
-                    PushWordToStack(registers.PC);
+                case 0xDE: // SBC A,d8
+                    SBC(FetchByte());
+                    return 0;
+                case 0xDF: // RST 18H
+                    Tick4();
+                    TimedPushWord(registers.PC);
                     registers.PC = 0x18;
-                    return 16;
-                case 0xE0:
-                    if (ExecuteLdhAToA8Timed()) return 0;
-                    memory.WriteByteToMemory((uint)(memory.ReadByteFromMemory(registers.PC) + 0xFF00), registers.A);
-                    registers.PC += 1;
-                    return 12;
-                case 0xE1:
+                    return 0;
+                case 0xE0: // LDH (a8),A
+                    {
+                        byte offset = FetchByte();
+                        WriteByte((uint)(0xFF00 + offset), registers.A);
+                        return 0;
+                    }
+                case 0xE1: // POP HL
                     if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP + 1))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
                     if (IsInOamRange(registers.SP + 1))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Read, 2);
-                    registers.HL = PopWordFromStack();
-                    return 12;
-                case 0xE2:
-                    if (ExecuteLdhAToCTimed()) return 0;
-                    memory.WriteByteToMemory((uint)(registers.C + 0xFF00), registers.A);
-                    return 8;
-                case 0xE5:
+                    registers.HL = TimedPopWord();
+                    return 0;
+                case 0xE2: // LD (C),A
+                    WriteByte((uint)(0xFF00 + registers.C), registers.A);
+                    return 0;
+                case 0xE5: // PUSH HL
                     if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP - 1) || IsInOamRange(registers.SP - 2))
                     {
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 2);
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 3);
                     }
-                    PushWordToStack(registers.HL);
-                    return 16;
-                case 0xE6:
-                    AND(memory.ReadByteFromMemory(registers.PC));
-                    registers.PC += 1;
-                    return 8;
-                case 0xE7:
-                    PushWordToStack(registers.PC);
+                    Tick4();
+                    TimedPushWord(registers.HL);
+                    return 0;
+                case 0xE6: // AND d8
+                    AND(FetchByte());
+                    return 0;
+                case 0xE7: // RST 20H
+                    Tick4();
+                    TimedPushWord(registers.PC);
                     registers.PC = 0x20;
-                    return 16;
-                case 0xE8:
-                    registers.SP = ADDR8(registers.SP);
-                    return 16;
-                case 0xE9:
+                    return 0;
+                case 0xE8: // ADD SP,r8
+                    {
+                        byte sb = FetchByte();
+                        registers.Flags.SetHalfCarryAdd((byte)registers.SP, sb);
+                        registers.Flags.UpdateCarryFlag((byte)registers.SP + sb);
+                        registers.Flags.N = false;
+                        registers.Flags.Z = false;
+                        registers.SP = (uint)((sbyte)sb + registers.SP);
+                        Tick4(); // internal
+                        Tick4(); // internal
+                        return 0;
+                    }
+                case 0xE9: // JP (HL)
                     registers.PC = registers.HL;
-                    return 4;
-                case 0xEA:
-                    if (ExecuteLdAToA16Timed()) return 0;
-                    memory.WriteByteToMemory(memory.ReadWordFromMemory(registers.PC), registers.A);
-                    registers.PC += 2;
-                    return 16;
-                case 0xEE:
-                    XOR(memory.ReadByteFromMemory(registers.PC));
-                    registers.PC += 1;
-                    return 8;
-                case 0xEF:
-                    PushWordToStack(registers.PC);
+                    return 0;
+                case 0xEA: // LD (a16),A
+                    {
+                        uint addr = FetchWord();
+                        WriteByte(addr, registers.A);
+                        return 0;
+                    }
+                case 0xEE: // XOR d8
+                    XOR(FetchByte());
+                    return 0;
+                case 0xEF: // RST 28H
+                    Tick4();
+                    TimedPushWord(registers.PC);
                     registers.PC = 0x28;
-                    return 16;
-                case 0xF0:
-                    if (ExecuteLdhAFromA8Timed()) return 0;
-                    registers.A = memory.ReadByteFromMemory((uint)(0xFF00 + memory.ReadByteFromMemory(registers.PC)));
-                    registers.PC += 1;
-                    return 12;
-                case 0xF1:
+                    return 0;
+                case 0xF0: // LDH A,(a8)
+                    {
+                        byte offset = FetchByte();
+                        registers.A = ReadByte((uint)(0xFF00 + offset));
+                        return 0;
+                    }
+                case 0xF1: // POP AF
                     if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP + 1))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.ReadDuringIncDec, 1);
                     if (IsInOamRange(registers.SP + 1))
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Read, 2);
-                    registers.AF = PopWordFromStack();
-                    return 12;
-                case 0xF2:
-                    if (ExecuteLdhAFromCTimed()) return 0;
-                    registers.A = memory.ReadByteFromMemory((uint)(0xFF00 + registers.C));
-                    return 8;
-                case 0xF3:
+                    registers.AF = TimedPopWord();
+                    return 0;
+                case 0xF2: // LD A,(C)
+                    registers.A = ReadByte((uint)(0xFF00 + registers.C));
+                    return 0;
+                case 0xF3: // DI
                     IME = false;
                     _imeEnableDelay = 0;
-                    return 4;
-                case 0xF5:
+                    return 0;
+                case 0xF5: // PUSH AF
                     if (IsInOamRange(registers.SP) || IsInOamRange(registers.SP - 1) || IsInOamRange(registers.SP - 2))
                     {
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 1);
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 2);
                         gameboy.TriggerOamBug(GameBoy.OamBugAccessType.Write, 3);
                     }
-                    PushWordToStack(registers.AF);
-                    return 16;
-                case 0xF6:
-                    OR(memory.ReadByteFromMemory(registers.PC));
-                    registers.PC += 1;
-                    return 8;
-                case 0xF7:
-                    PushWordToStack(registers.PC);
+                    Tick4();
+                    TimedPushWord(registers.AF);
+                    return 0;
+                case 0xF6: // OR d8
+                    OR(FetchByte());
+                    return 0;
+                case 0xF7: // RST 30H
+                    Tick4();
+                    TimedPushWord(registers.PC);
                     registers.PC = 0x30;
-                    return 16;
-                case 0xF8:
-                    registers.HL = ADDR8(registers.SP);
-                    return 12;
-                case 0xF9:
+                    return 0;
+                case 0xF8: // LD HL,SP+r8
+                    {
+                        byte sb = FetchByte();
+                        registers.Flags.SetHalfCarryAdd((byte)registers.SP, sb);
+                        registers.Flags.UpdateCarryFlag((byte)registers.SP + sb);
+                        registers.Flags.N = false;
+                        registers.Flags.Z = false;
+                        registers.HL = (uint)((sbyte)sb + registers.SP);
+                        Tick4(); // internal
+                        return 0;
+                    }
+                case 0xF9: // LD SP,HL
                     registers.SP = registers.HL;
-                    return 8;
-                case 0xFA:
-                    if (ExecuteLdAFromA16Timed()) return 0;
-                    registers.A = memory.ReadByteFromMemory(memory.ReadWordFromMemory(registers.PC));
-                    registers.PC += 2;
-                    return 16;
-                case 0xFB:
-                    // EI enables IME after the following instruction completes.
+                    Tick4(); // internal
+                    return 0;
+                case 0xFA: // LD A,(a16)
+                    {
+                        uint addr = FetchWord();
+                        registers.A = ReadByte(addr);
+                        return 0;
+                    }
+                case 0xFB: // EI
                     _imeEnableDelay = 2;
-                    return 4;
-                case 0xFE:
-                    CP(memory.ReadByteFromMemory(registers.PC));
-                    registers.PC += 1;
-                    return 8;
-                case 0xFF:
-                    PushWordToStack(registers.PC);
+                    return 0;
+                case 0xFE: // CP d8
+                    CP(FetchByte());
+                    return 0;
+                case 0xFF: // RST 38H
+                    Tick4();
+                    TimedPushWord(registers.PC);
                     registers.PC = 0x38;
-                    return 16;
+                    return 0;
             }
             return 0;
         }
 
-        private int ExecuteCB(int opcodeHi)
+        // ==================================================================
+        //  CB-prefixed opcodes (all M-cycle timed)
+        // ==================================================================
+
+        private void ExecuteCB(int cbOpcode)
         {
-            switch (opcodeHi)
+            int reg = cbOpcode & 0x07;
+            int op = cbOpcode >> 3;
+
+            if (reg == 0x06) // (HL) operand
             {
-                case 0x00: registers.B = RLC(registers.B); return 8;
-                case 0x01: registers.C = RLC(registers.C); return 8;
-                case 0x02: registers.D = RLC(registers.D); return 8;
-                case 0x03: registers.E = RLC(registers.E); return 8;
-                case 0x04: registers.H = RLC(registers.H); return 8;
-                case 0x05: registers.L = RLC(registers.L); return 8;
-                case 0x06: memory.WriteByteToMemory(registers.HL, RLC(memory.ReadByteFromMemory(registers.HL))); return 16;
-                case 0x07: registers.A = RLC(registers.A); return 8;
-                case 0x08: registers.B = RRC(registers.B); return 8;
-                case 0x09: registers.C = RRC(registers.C); return 8;
-                case 0x0A: registers.D = RRC(registers.D); return 8;
-                case 0x0B: registers.E = RRC(registers.E); return 8;
-                case 0x0C: registers.H = RRC(registers.H); return 8;
-                case 0x0D: registers.L = RRC(registers.L); return 8;
-                case 0x0E: memory.WriteByteToMemory(registers.HL, RRC(memory.ReadByteFromMemory(registers.HL))); return 16;
-                case 0x0F: registers.A = RRC(registers.A); return 8;
-                case 0x10: registers.B = RL(registers.B); return 8;
-                case 0x11: registers.C = RL(registers.C); return 8;
-                case 0x12: registers.D = RL(registers.D); return 8;
-                case 0x13: registers.E = RL(registers.E); return 8;
-                case 0x14: registers.H = RL(registers.H); return 8;
-                case 0x15: registers.L = RL(registers.L); return 8;
-                case 0x16: memory.WriteByteToMemory(registers.HL, RL(memory.ReadByteFromMemory(registers.HL))); return 16;
-                case 0x17: registers.A = RL(registers.A); return 8;
-                case 0x18: registers.B = RR(registers.B); return 8;
-                case 0x19: registers.C = RR(registers.C); return 8;
-                case 0x1A: registers.D = RR(registers.D); return 8;
-                case 0x1B: registers.E = RR(registers.E); return 8;
-                case 0x1C: registers.H = RR(registers.H); return 8;
-                case 0x1D: registers.L = RR(registers.L); return 8;
-                case 0x1E: memory.WriteByteToMemory(registers.HL, RR(memory.ReadByteFromMemory(registers.HL))); return 16;
-                case 0x1F: registers.A = RR(registers.A); return 8;
-                case 0x20: registers.B = SHL(registers.B); return 8;
-                case 0x21: registers.C = SHL(registers.C); return 8;
-                case 0x22: registers.D = SHL(registers.D); return 8;
-                case 0x23: registers.E = SHL(registers.E); return 8;
-                case 0x24: registers.H = SHL(registers.H); return 8;
-                case 0x25: registers.L = SHL(registers.L); return 8;
-                case 0x26: memory.WriteByteToMemory(registers.HL, SHL(memory.ReadByteFromMemory(registers.HL))); return 16;
-                case 0x27: registers.A = SHL(registers.A); return 8;
-                case 0x28: registers.B = SHR(registers.B); return 8;
-                case 0x29: registers.C = SHR(registers.C); return 8;
-                case 0x2A: registers.D = SHR(registers.D); return 8;
-                case 0x2B: registers.E = SHR(registers.E); return 8;
-                case 0x2C: registers.H = SHR(registers.H); return 8;
-                case 0x2D: registers.L = SHR(registers.L); return 8;
-                case 0x2E: memory.WriteByteToMemory(registers.HL, SHR(memory.ReadByteFromMemory(registers.HL))); return 16;
-                case 0x2F: registers.A = SHR(registers.A); return 8;
-                case 0x30: registers.B = SwapNibble(registers.B); return 8;
-                case 0x31: registers.C = SwapNibble(registers.C); return 8;
-                case 0x32: registers.D = SwapNibble(registers.D); return 8;
-                case 0x33: registers.E = SwapNibble(registers.E); return 8;
-                case 0x34: registers.H = SwapNibble(registers.H); return 8;
-                case 0x35: registers.L = SwapNibble(registers.L); return 8;
-                case 0x36: memory.WriteByteToMemory(registers.HL, SwapNibble(memory.ReadByteFromMemory(registers.HL))); return 16;
-                case 0x37: registers.A = SwapNibble(registers.A); return 8;
-                case 0x38: registers.B = SRL(registers.B); return 8;
-                case 0x39: registers.C = SRL(registers.C); return 8;
-                case 0x3A: registers.D = SRL(registers.D); return 8;
-                case 0x3B: registers.E = SRL(registers.E); return 8;
-                case 0x3C: registers.H = SRL(registers.H); return 8;
-                case 0x3D: registers.L = SRL(registers.L); return 8;
-                case 0x3E: memory.WriteByteToMemory(registers.HL, SRL(memory.ReadByteFromMemory(registers.HL))); return 16;
-                case 0x3F: registers.A = SRL(registers.A); return 8;
-                case 0x40: CompBit(registers.B, 0); return 8;
-                case 0x41: CompBit(registers.C, 0); return 8;
-                case 0x42: CompBit(registers.D, 0); return 8;
-                case 0x43: CompBit(registers.E, 0); return 8;
-                case 0x44: CompBit(registers.H, 0); return 8;
-                case 0x45: CompBit(registers.L, 0); return 8;
-                case 0x46: CompBit(memory.ReadByteFromMemory(registers.HL), 0); return 12;
-                case 0x47: CompBit(registers.A, 0); return 8;
-                case 0x48: CompBit(registers.B, 1); return 8;
-                case 0x49: CompBit(registers.C, 1); return 8;
-                case 0x4A: CompBit(registers.D, 1); return 8;
-                case 0x4B: CompBit(registers.E, 1); return 8;
-                case 0x4C: CompBit(registers.H, 1); return 8;
-                case 0x4D: CompBit(registers.L, 1); return 8;
-                case 0x4E: CompBit(memory.ReadByteFromMemory(registers.HL), 1); return 12;
-                case 0x4F: CompBit(registers.A, 1); return 8;
-                case 0x50: CompBit(registers.B, 2); return 8;
-                case 0x51: CompBit(registers.C, 2); return 8;
-                case 0x52: CompBit(registers.D, 2); return 8;
-                case 0x53: CompBit(registers.E, 2); return 8;
-                case 0x54: CompBit(registers.H, 2); return 8;
-                case 0x55: CompBit(registers.L, 2); return 8;
-                case 0x56: CompBit(memory.ReadByteFromMemory(registers.HL), 2); return 12;
-                case 0x57: CompBit(registers.A, 2); return 8;
-                case 0x58: CompBit(registers.B, 3); return 8;
-                case 0x59: CompBit(registers.C, 3); return 8;
-                case 0x5A: CompBit(registers.D, 3); return 8;
-                case 0x5B: CompBit(registers.E, 3); return 8;
-                case 0x5C: CompBit(registers.H, 3); return 8;
-                case 0x5D: CompBit(registers.L, 3); return 8;
-                case 0x5E: CompBit(memory.ReadByteFromMemory(registers.HL), 3); return 12;
-                case 0x5F: CompBit(registers.A, 3); return 8;
-                case 0x60: CompBit(registers.B, 4); return 8;
-                case 0x61: CompBit(registers.C, 4); return 8;
-                case 0x62: CompBit(registers.D, 4); return 8;
-                case 0x63: CompBit(registers.E, 4); return 8;
-                case 0x64: CompBit(registers.H, 4); return 8;
-                case 0x65: CompBit(registers.L, 4); return 8;
-                case 0x66: CompBit(memory.ReadByteFromMemory(registers.HL), 4); return 12;
-                case 0x67: CompBit(registers.A, 4); return 8;
-                case 0x68: CompBit(registers.B, 5); return 8;
-                case 0x69: CompBit(registers.C, 5); return 8;
-                case 0x6A: CompBit(registers.D, 5); return 8;
-                case 0x6B: CompBit(registers.E, 5); return 8;
-                case 0x6C: CompBit(registers.H, 5); return 8;
-                case 0x6D: CompBit(registers.L, 5); return 8;
-                case 0x6E: CompBit(memory.ReadByteFromMemory(registers.HL), 5); return 12;
-                case 0x6F: CompBit(registers.A, 5); return 8;
-                case 0x70: CompBit(registers.B, 6); return 8;
-                case 0x71: CompBit(registers.C, 6); return 8;
-                case 0x72: CompBit(registers.D, 6); return 8;
-                case 0x73: CompBit(registers.E, 6); return 8;
-                case 0x74: CompBit(registers.H, 6); return 8;
-                case 0x75: CompBit(registers.L, 6); return 8;
-                case 0x76: CompBit(memory.ReadByteFromMemory(registers.HL), 6); return 12;
-                case 0x77: CompBit(registers.A, 6); return 8;
-                case 0x78: CompBit(registers.B, 7); return 8;
-                case 0x79: CompBit(registers.C, 7); return 8;
-                case 0x7A: CompBit(registers.D, 7); return 8;
-                case 0x7B: CompBit(registers.E, 7); return 8;
-                case 0x7C: CompBit(registers.H, 7); return 8;
-                case 0x7D: CompBit(registers.L, 7); return 8;
-                case 0x7E: CompBit(memory.ReadByteFromMemory(registers.HL), 7); return 12;
-                case 0x7F: CompBit(registers.A, 7); return 8;
-                case 0x80: registers.B = ResBit(registers.B, 0); return 8;
-                case 0x81: registers.C = ResBit(registers.C, 0); return 8;
-                case 0x82: registers.D = ResBit(registers.D, 0); return 8;
-                case 0x83: registers.E = ResBit(registers.E, 0); return 8;
-                case 0x84: registers.H = ResBit(registers.H, 0); return 8;
-                case 0x85: registers.L = ResBit(registers.L, 0); return 8;
-                case 0x86: memory.WriteByteToMemory(registers.HL, ResBit(memory.ReadByteFromMemory(registers.HL), 0)); return 16;
-                case 0x87: registers.A = ResBit(registers.A, 0); return 8;
-                case 0x88: registers.B = ResBit(registers.B, 1); return 8;
-                case 0x89: registers.C = ResBit(registers.C, 1); return 8;
-                case 0x8A: registers.D = ResBit(registers.D, 1); return 8;
-                case 0x8B: registers.E = ResBit(registers.E, 1); return 8;
-                case 0x8C: registers.H = ResBit(registers.H, 1); return 8;
-                case 0x8D: registers.L = ResBit(registers.L, 1); return 8;
-                case 0x8E: memory.WriteByteToMemory(registers.HL, ResBit(memory.ReadByteFromMemory(registers.HL), 1)); return 16;
-                case 0x8F: registers.A = ResBit(registers.A, 1); return 8;
-                case 0x90: registers.B = ResBit(registers.B, 2); return 8;
-                case 0x91: registers.C = ResBit(registers.C, 2); return 8;
-                case 0x92: registers.D = ResBit(registers.D, 2); return 8;
-                case 0x93: registers.E = ResBit(registers.E, 2); return 8;
-                case 0x94: registers.H = ResBit(registers.H, 2); return 8;
-                case 0x95: registers.L = ResBit(registers.L, 2); return 8;
-                case 0x96: memory.WriteByteToMemory(registers.HL, ResBit(memory.ReadByteFromMemory(registers.HL), 2)); return 16;
-                case 0x97: registers.A = ResBit(registers.A, 2); return 8;
-                case 0x98: registers.B = ResBit(registers.B, 3); return 8;
-                case 0x99: registers.C = ResBit(registers.C, 3); return 8;
-                case 0x9A: registers.D = ResBit(registers.D, 3); return 8;
-                case 0x9B: registers.E = ResBit(registers.E, 3); return 8;
-                case 0x9C: registers.H = ResBit(registers.H, 3); return 8;
-                case 0x9D: registers.L = ResBit(registers.L, 3); return 8;
-                case 0x9E: memory.WriteByteToMemory(registers.HL, ResBit(memory.ReadByteFromMemory(registers.HL), 3)); return 16;
-                case 0x9F: registers.A = ResBit(registers.A, 3); return 8;
-                case 0xA0: registers.B = ResBit(registers.B, 4); return 8;
-                case 0xA1: registers.C = ResBit(registers.C, 4); return 8;
-                case 0xA2: registers.D = ResBit(registers.D, 4); return 8;
-                case 0xA3: registers.E = ResBit(registers.E, 4); return 8;
-                case 0xA4: registers.H = ResBit(registers.H, 4); return 8;
-                case 0xA5: registers.L = ResBit(registers.L, 4); return 8;
-                case 0xA6: memory.WriteByteToMemory(registers.HL, ResBit(memory.ReadByteFromMemory(registers.HL), 4)); return 16;
-                case 0xA7: registers.A = ResBit(registers.A, 4); return 8;
-                case 0xA8: registers.B = ResBit(registers.B, 5); return 8;
-                case 0xA9: registers.C = ResBit(registers.C, 5); return 8;
-                case 0xAA: registers.D = ResBit(registers.D, 5); return 8;
-                case 0xAB: registers.E = ResBit(registers.E, 5); return 8;
-                case 0xAC: registers.H = ResBit(registers.H, 5); return 8;
-                case 0xAD: registers.L = ResBit(registers.L, 5); return 8;
-                case 0xAE: memory.WriteByteToMemory(registers.HL, ResBit(memory.ReadByteFromMemory(registers.HL), 5)); return 16;
-                case 0xAF: registers.A = ResBit(registers.A, 5); return 8;
-                case 0xB0: registers.B = ResBit(registers.B, 6); return 8;
-                case 0xB1: registers.C = ResBit(registers.C, 6); return 8;
-                case 0xB2: registers.D = ResBit(registers.D, 6); return 8;
-                case 0xB3: registers.E = ResBit(registers.E, 6); return 8;
-                case 0xB4: registers.H = ResBit(registers.H, 6); return 8;
-                case 0xB5: registers.L = ResBit(registers.L, 6); return 8;
-                case 0xB6: memory.WriteByteToMemory(registers.HL, ResBit(memory.ReadByteFromMemory(registers.HL), 6)); return 16;
-                case 0xB7: registers.A = ResBit(registers.A, 6); return 8;
-                case 0xB8: registers.B = ResBit(registers.B, 7); return 8;
-                case 0xB9: registers.C = ResBit(registers.C, 7); return 8;
-                case 0xBA: registers.D = ResBit(registers.D, 7); return 8;
-                case 0xBB: registers.E = ResBit(registers.E, 7); return 8;
-                case 0xBC: registers.H = ResBit(registers.H, 7); return 8;
-                case 0xBD: registers.L = ResBit(registers.L, 7); return 8;
-                case 0xBE: memory.WriteByteToMemory(registers.HL, ResBit(memory.ReadByteFromMemory(registers.HL), 7)); return 16;
-                case 0xBF: registers.A = ResBit(registers.A, 7); return 8;
-                case 0xC0: registers.B = SetBitVal(registers.B, 0); return 8;
-                case 0xC1: registers.C = SetBitVal(registers.C, 0); return 8;
-                case 0xC2: registers.D = SetBitVal(registers.D, 0); return 8;
-                case 0xC3: registers.E = SetBitVal(registers.E, 0); return 8;
-                case 0xC4: registers.H = SetBitVal(registers.H, 0); return 8;
-                case 0xC5: registers.L = SetBitVal(registers.L, 0); return 8;
-                case 0xC6: memory.WriteByteToMemory(registers.HL, SetBitVal(memory.ReadByteFromMemory(registers.HL), 0)); return 16;
-                case 0xC7: registers.A = SetBitVal(registers.A, 0); return 8;
-                case 0xC8: registers.B = SetBitVal(registers.B, 1); return 8;
-                case 0xC9: registers.C = SetBitVal(registers.C, 1); return 8;
-                case 0xCA: registers.D = SetBitVal(registers.D, 1); return 8;
-                case 0xCB: registers.E = SetBitVal(registers.E, 1); return 8;
-                case 0xCC: registers.H = SetBitVal(registers.H, 1); return 8;
-                case 0xCD: registers.L = SetBitVal(registers.L, 1); return 8;
-                case 0xCE: memory.WriteByteToMemory(registers.HL, SetBitVal(memory.ReadByteFromMemory(registers.HL), 1)); return 16;
-                case 0xCF: registers.A = SetBitVal(registers.A, 1); return 8;
-                case 0xD0: registers.B = SetBitVal(registers.B, 2); return 8;
-                case 0xD1: registers.C = SetBitVal(registers.C, 2); return 8;
-                case 0xD2: registers.D = SetBitVal(registers.D, 2); return 8;
-                case 0xD3: registers.E = SetBitVal(registers.E, 2); return 8;
-                case 0xD4: registers.H = SetBitVal(registers.H, 2); return 8;
-                case 0xD5: registers.L = SetBitVal(registers.L, 2); return 8;
-                case 0xD6: memory.WriteByteToMemory(registers.HL, SetBitVal(memory.ReadByteFromMemory(registers.HL), 2)); return 16;
-                case 0xD7: registers.A = SetBitVal(registers.A, 2); return 8;
-                case 0xD8: registers.B = SetBitVal(registers.B, 3); return 8;
-                case 0xD9: registers.C = SetBitVal(registers.C, 3); return 8;
-                case 0xDA: registers.D = SetBitVal(registers.D, 3); return 8;
-                case 0xDB: registers.E = SetBitVal(registers.E, 3); return 8;
-                case 0xDC: registers.H = SetBitVal(registers.H, 3); return 8;
-                case 0xDD: registers.L = SetBitVal(registers.L, 3); return 8;
-                case 0xDE: memory.WriteByteToMemory(registers.HL, SetBitVal(memory.ReadByteFromMemory(registers.HL), 3)); return 16;
-                case 0xDF: registers.A = SetBitVal(registers.A, 3); return 8;
-                case 0xE0: registers.B = SetBitVal(registers.B, 4); return 8;
-                case 0xE1: registers.C = SetBitVal(registers.C, 4); return 8;
-                case 0xE2: registers.D = SetBitVal(registers.D, 4); return 8;
-                case 0xE3: registers.E = SetBitVal(registers.E, 4); return 8;
-                case 0xE4: registers.H = SetBitVal(registers.H, 4); return 8;
-                case 0xE5: registers.L = SetBitVal(registers.L, 4); return 8;
-                case 0xE6: memory.WriteByteToMemory(registers.HL, SetBitVal(memory.ReadByteFromMemory(registers.HL), 4)); return 16;
-                case 0xE7: registers.A = SetBitVal(registers.A, 4); return 8;
-                case 0xE8: registers.B = SetBitVal(registers.B, 5); return 8;
-                case 0xE9: registers.C = SetBitVal(registers.C, 5); return 8;
-                case 0xEA: registers.D = SetBitVal(registers.D, 5); return 8;
-                case 0xEB: registers.E = SetBitVal(registers.E, 5); return 8;
-                case 0xEC: registers.H = SetBitVal(registers.H, 5); return 8;
-                case 0xED: registers.L = SetBitVal(registers.L, 5); return 8;
-                case 0xEE: memory.WriteByteToMemory(registers.HL, SetBitVal(memory.ReadByteFromMemory(registers.HL), 5)); return 16;
-                case 0xEF: registers.A = SetBitVal(registers.A, 5); return 8;
-                case 0xF0: registers.B = SetBitVal(registers.B, 6); return 8;
-                case 0xF1: registers.C = SetBitVal(registers.C, 6); return 8;
-                case 0xF2: registers.D = SetBitVal(registers.D, 6); return 8;
-                case 0xF3: registers.E = SetBitVal(registers.E, 6); return 8;
-                case 0xF4: registers.H = SetBitVal(registers.H, 6); return 8;
-                case 0xF5: registers.L = SetBitVal(registers.L, 6); return 8;
-                case 0xF6: memory.WriteByteToMemory(registers.HL, SetBitVal(memory.ReadByteFromMemory(registers.HL), 6)); return 16;
-                case 0xF7: registers.A = SetBitVal(registers.A, 6); return 8;
-                case 0xF8: registers.B = SetBitVal(registers.B, 7); return 8;
-                case 0xF9: registers.C = SetBitVal(registers.C, 7); return 8;
-                case 0xFA: registers.D = SetBitVal(registers.D, 7); return 8;
-                case 0xFB: registers.E = SetBitVal(registers.E, 7); return 8;
-                case 0xFC: registers.H = SetBitVal(registers.H, 7); return 8;
-                case 0xFD: registers.L = SetBitVal(registers.L, 7); return 8;
-                case 0xFE: memory.WriteByteToMemory(registers.HL, SetBitVal(memory.ReadByteFromMemory(registers.HL), 7)); return 16;
-                case 0xFF: registers.A = SetBitVal(registers.A, 7); return 8;
+                byte value = ReadByte(registers.HL);
+
+                if ((cbOpcode & 0xC0) == 0x40) // BIT
+                {
+                    CompBit(value, (cbOpcode >> 3) & 0x07);
+                    return; // 12T total (4 fetch + 4 CB fetch + 4 read)
+                }
+
+                byte result;
+                if ((cbOpcode & 0xC0) == 0x80) // RES
+                    result = ResBit(value, (cbOpcode >> 3) & 0x07);
+                else if ((cbOpcode & 0xC0) == 0xC0) // SET
+                    result = SetBitVal(value, (cbOpcode >> 3) & 0x07);
+                else // rotate/shift/swap
+                {
+                    result = op switch
+                    {
+                        0 => RLC(value),
+                        1 => RRC(value),
+                        2 => RL(value),
+                        3 => RR(value),
+                        4 => SHL(value),
+                        5 => SHR(value),
+                        6 => SwapNibble(value),
+                        7 => SRL(value),
+                        _ => value,
+                    };
+                }
+                WriteByte(registers.HL, result); // 16T total
+                return;
             }
-            return 0;
+
+            // Register operand
+            byte rv = GetCBReg(reg);
+            byte nv;
+
+            switch (cbOpcode & 0xC0)
+            {
+                case 0x40: // BIT
+                    CompBit(rv, (cbOpcode >> 3) & 0x07);
+                    return;
+                case 0x80: // RES
+                    nv = ResBit(rv, (cbOpcode >> 3) & 0x07);
+                    break;
+                case 0xC0: // SET
+                    nv = SetBitVal(rv, (cbOpcode >> 3) & 0x07);
+                    break;
+                default: // rotate/shift/swap
+                    nv = op switch
+                    {
+                        0 => RLC(rv),
+                        1 => RRC(rv),
+                        2 => RL(rv),
+                        3 => RR(rv),
+                        4 => SHL(rv),
+                        5 => SHR(rv),
+                        6 => SwapNibble(rv),
+                        7 => SRL(rv),
+                        _ => rv,
+                    };
+                    break;
+            }
+            SetCBReg(reg, nv);
         }
 
-        // ---- ALU: separate ADD/ADC and SUB/SBC to eliminate optional-param branch ----
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private byte GetCBReg(int r) => r switch
+        {
+            0 => registers.B,
+            1 => registers.C,
+            2 => registers.D,
+            3 => registers.E,
+            4 => registers.H,
+            5 => registers.L,
+            // 6 is (HL) � handled separately
+            7 => registers.A,
+            _ => 0,
+        };
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void SetCBReg(int r, byte v)
+        {
+            switch (r)
+            {
+                case 0: registers.B = v; break;
+                case 1: registers.C = v; break;
+                case 2: registers.D = v; break;
+                case 3: registers.E = v; break;
+                case 4: registers.H = v; break;
+                case 5: registers.L = v; break;
+                case 7: registers.A = v; break;
+            }
+        }
+
+        // ==================================================================
+        //  Timed Push/Pop (used by CALL, RET, PUSH, POP, RST, interrupts)
+        // ==================================================================
+
+        private void TimedPushWord(uint value)
+        {
+            registers.SP--;
+            WriteByte(registers.SP, (byte)(value >> 8));
+            registers.SP--;
+            WriteByte(registers.SP, (byte)value);
+        }
+
+        private uint TimedPopWord()
+        {
+            byte lo = ReadByte(registers.SP);
+            registers.SP++;
+            byte hi = ReadByte(registers.SP);
+            registers.SP++;
+            return (uint)(hi << 8 | lo);
+        }
+
+        // Keep untimed versions for external use (GameBoy interrupt handler)
+        public void PushWordToStack(uint value)
+        {
+            registers.SP -= 2;
+            memory.WriteWordToMemory(registers.SP, value);
+        }
+
+        public uint PopWordFromStack()
+        {
+            uint value = memory.ReadWordFromMemory(registers.SP);
+            registers.SP += 2;
+            return value;
+        }
+
+        // ==================================================================
+        //  ALU
+        // ==================================================================
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ADD(byte val)
@@ -1334,16 +1109,6 @@ namespace GameboyEmu.Core
             registers.HL = value;
         }
 
-        private uint ADDR8(uint value)
-        {
-            byte sb = memory.ReadByteFromMemory(registers.PC++);
-            registers.Flags.SetHalfCarryAdd((byte)value, sb);
-            registers.Flags.UpdateCarryFlag((byte)value + sb);
-            registers.Flags.N = false;
-            registers.Flags.Z = false;
-            return (uint)((sbyte)sb + value);
-        }
-
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void SUB(byte val)
         {
@@ -1367,7 +1132,9 @@ namespace GameboyEmu.Core
             registers.A = (byte)result;
         }
 
-        // ---- Logic ops: direct field writes instead of FromByte ----
+        // ==================================================================
+        //  Logic ops
+        // ==================================================================
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void AND(byte val)
@@ -1409,7 +1176,9 @@ namespace GameboyEmu.Core
             registers.Flags.C = (result >> 8) != 0;
         }
 
-        // ---- Rotate: separate RLC/RL/RRC/RR to eliminate optional-param branches ----
+        // ==================================================================
+        //  Rotate / Shift
+        // ==================================================================
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte RLC(byte value)
@@ -1492,35 +1261,9 @@ namespace GameboyEmu.Core
             return result;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void JRN(sbyte value)
-        {
-            registers.PC = (uint)(registers.PC + value + 1);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int JRZ(sbyte value, bool state)
-        {
-            if (registers.Flags.Z == state)
-            {
-                registers.PC = (uint)(registers.PC + value + 1);
-                return 12;
-            }
-            registers.PC += 1;
-            return 8;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int JRC(sbyte value, bool state)
-        {
-            if (registers.Flags.C == state)
-            {
-                registers.PC = (uint)(registers.PC + value + 1);
-                return 12;
-            }
-            registers.PC += 1;
-            return 8;
-        }
+        // ==================================================================
+        //  Misc helpers
+        // ==================================================================
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte SwapNibble(byte value)
@@ -1564,8 +1307,6 @@ namespace GameboyEmu.Core
             registers.Flags.N = false;
         }
 
-        // ---- Branchless bit set/reset ----
-
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static byte SetBitVal(int register, int bitIndex)
             => (byte)(register | (1 << bitIndex));
@@ -1581,18 +1322,9 @@ namespace GameboyEmu.Core
                 ? (byte)(register | (1 << bitIndex))
                 : (byte)(register & ~(1 << bitIndex));
 
-        public void PushWordToStack(uint value)
-        {
-            registers.SP -= 2;
-            memory.WriteWordToMemory(registers.SP, value);
-        }
-
-        public uint PopWordFromStack()
-        {
-            uint value = memory.ReadWordFromMemory(registers.SP);
-            registers.SP += 2;
-            return value;
-        }
+        // ==================================================================
+        //  IME / Interrupt handling
+        // ==================================================================
 
         public void UpdateIME()
         {
@@ -1604,142 +1336,9 @@ namespace GameboyEmu.Core
             }
         }
 
-        public bool ConsumeInstructionHandledInternally()
-        {
-            bool handled = _instructionHandledInternally;
-            _instructionHandledInternally = false;
-            return handled;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void StepInternal(int cycles)
-        {
-            _instructionHandledInternally = true;
-            gameboy.AdvanceHardwareFromCpu(cycles);
-        }
-
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool IsInOamRange(uint value)
             => value >= 0xFE00 && value <= 0xFEFF;
-
-        private bool ExecuteLdhAFromA8Timed()
-        {
-            byte offset = memory.ReadByteFromMemory(registers.PC++);
-            StepInternal(12); // complete instruction timing before access
-            registers.A = memory.ReadByteFromMemory((uint)(0xFF00 + offset));
-            return true;
-        }
-
-        private bool ExecuteLdAFromA16Timed()
-        {
-            byte lo = memory.ReadByteFromMemory(registers.PC++);
-            byte hi = memory.ReadByteFromMemory(registers.PC++);
-            StepInternal(8); // setup
-            registers.A = memory.ReadByteFromMemory((uint)(lo | (hi << 8)));
-            StepInternal(8); // remaining cycles
-            return true;
-        }
-
-        private bool ExecuteLdhAToA8Timed()
-        {
-            byte offset = memory.ReadByteFromMemory(registers.PC++);
-            StepInternal(12); // complete instruction timing before access
-            memory.WriteByteToMemory((uint)(0xFF00 + offset), registers.A);
-            return true;
-        }
-
-        private bool ExecuteLdhAToCTimed()
-        {
-            StepInternal(4); // setup
-            memory.WriteByteToMemory((uint)(0xFF00 + registers.C), registers.A);
-            StepInternal(4); // remaining cycles
-            return true;
-        }
-
-        private bool ExecuteLdhAFromCTimed()
-        {
-            StepInternal(4); // setup
-            registers.A = memory.ReadByteFromMemory((uint)(0xFF00 + registers.C));
-            StepInternal(4); // remaining cycles
-            return true;
-        }
-
-        private bool ExecuteLdAToA16Timed()
-        {
-            byte lo = memory.ReadByteFromMemory(registers.PC++);
-            byte hi = memory.ReadByteFromMemory(registers.PC++);
-            StepInternal(8); // setup
-            memory.WriteByteToMemory((uint)(lo | (hi << 8)), registers.A);
-            StepInternal(8); // remaining cycles
-            return true;
-        }
-
-        private bool ExecuteLdHlNTimed()
-        {
-            byte value = memory.ReadByteFromMemory(registers.PC++);
-            StepInternal(4); // setup
-            memory.WriteByteToMemory(registers.HL, value);
-            StepInternal(8); // remaining cycles
-            return true;
-        }
-
-        private bool ExecuteIncDecHlTimed(bool increment)
-        {
-            byte val = memory.ReadByteFromMemory(registers.HL);
-            StepInternal(4); // memory read cycle
-
-            if (increment)
-            {
-                registers.Flags.SetHalfCarryAdd(val, 1);
-                val++;
-                registers.Flags.UpdateZeroFlag(val);
-                registers.Flags.N = false;
-            }
-            else
-            {
-                registers.Flags.SetHalfCarrySub(val, 1);
-                val--;
-                registers.Flags.UpdateZeroFlag(val);
-                registers.Flags.N = true;
-            }
-
-            memory.WriteByteToMemory(registers.HL, val);
-            StepInternal(8); // remaining cycles
-            return true;
-        }
-
-        private int ExecuteCBTimedHL(int cbOpcode)
-        {
-            bool isBitTest = (cbOpcode & 0xC0) == 0x40;
-            StepInternal(4); // alignment cycle
-            byte value = memory.ReadByteFromMemory(registers.HL);
-
-            if (isBitTest)
-            {
-                CompBit(value, (cbOpcode >> 3) & 0x07);
-                StepInternal(8); // remaining cycles
-                return 0;
-            }
-
-            byte newValue = cbOpcode switch
-            {
-                0x06 => RLC(value),
-                0x0E => RRC(value),
-                0x16 => RL(value),
-                0x1E => RR(value),
-                0x26 => SHL(value),
-                0x2E => SHR(value),
-                0x36 => SwapNibble(value),
-                0x3E => SRL(value),
-                >= 0x80 and <= 0xBF => ResBit(value, (cbOpcode >> 3) & 0x07),
-                _ => SetBitVal(value, (cbOpcode >> 3) & 0x07),
-            };
-
-            StepInternal(4); // between read/write
-            memory.WriteByteToMemory(registers.HL, newValue);
-            StepInternal(8); // remaining cycles
-            return 0;
-        }
 
         public int ExecuteInterrupt(int b)
         {
@@ -1748,11 +1347,18 @@ namespace GameboyEmu.Core
 
             if (IME)
             {
-                PushWordToStack(registers.PC);
+                // Interrupt dispatch: 5 M-cycles total
+                // M0: two internal cycles
+                Tick4();
+                Tick4();
+                // M2-M3: push PC
+                TimedPushWord(registers.PC);
+                // M4: set PC to handler (read of handler address is internal)
                 registers.PC = (ushort)(0x40 + (8 * b));
+                Tick4();
                 IME = false;
                 memory.IF = SetBit(memory.IF, b, 0);
-                return 20;
+                return 0; // all timing handled internally
             }
             return 0;
         }
@@ -1761,19 +1367,16 @@ namespace GameboyEmu.Core
         {
             if (IME)
             {
-                // Normal HALT: stop CPU until an interrupt fires
                 Halted = true;
             }
             else
             {
                 if ((memory.IE & memory.IF & 0x1F) == 0)
                 {
-                    // HALT with IME=false and no pending interrupt: halt and wait
                     Halted = true;
                 }
                 else
                 {
-                    // HALT bug: IE & IF != 0 but IME=false
                     HaltBug = true;
                 }
             }
@@ -1781,7 +1384,6 @@ namespace GameboyEmu.Core
 
         private void Stop()
         {
-            // STOP is encoded as a two-byte instruction (0x10 0x00).
             registers.PC++;
         }
     }
