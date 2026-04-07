@@ -564,7 +564,7 @@ namespace GameboyEmu.Core
         /// </summary>
         private void DrawViewportBevel()
         {
-            const int BevelWidth = 4;
+            const int BevelWidth = 3;
             int vw = ScreenWidth * Scale;   // viewport pixel width
             int vh = ScreenHeight * Scale;   // viewport pixel height
             int x = GameX;
