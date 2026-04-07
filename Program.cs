@@ -132,6 +132,14 @@ namespace GameboyEmu
                             .OrderBy(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase)
                             .ToList();
 
+                        // No ROMs in the root folder — check subdirectories
+                        if (romFiles.Count == 0)
+                        {
+                            romFiles = Directory.GetFiles(romsDir, "*.gb", SearchOption.AllDirectories)
+                                .OrderBy(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase)
+                                .ToList();
+                        }
+
                         if (romFiles.Count > 0)
                         {
                             gameRomAvailable = true;
