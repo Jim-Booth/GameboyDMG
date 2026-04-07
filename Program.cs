@@ -12,6 +12,7 @@
 // ============================================================================
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using GameboyEmu.Core;
@@ -26,9 +27,55 @@ namespace GameboyEmu
         {
             Console.WriteLine("GameBoy Emulator starting...");
 
-            // Parse --nobootrom switch
-            bool noBoot = args.Contains("--nobootrom", StringComparer.OrdinalIgnoreCase);
-            args = args.Where(a => !a.Equals("--nobootrom", StringComparison.OrdinalIgnoreCase)).ToArray();
+            // Parse command-line options.
+            bool noBoot = false;
+            string? romPathOverride = null;
+            var positionalArgs = new List<string>();
+            for (int i = 0; i < args.Length; i++)
+            {
+                string arg = args[i];
+                if (arg.Equals("--nobootrom", StringComparison.OrdinalIgnoreCase))
+                {
+                    noBoot = true;
+                    continue;
+                }
+
+                if (arg.StartsWith("--rompath=", StringComparison.OrdinalIgnoreCase))
+                {
+                    romPathOverride = arg.Substring("--rompath=".Length);
+                    continue;
+                }
+
+                if (arg.Equals("--rompath", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 >= args.Length)
+                    {
+                        Console.WriteLine("Missing value for --rompath.");
+                        return;
+                    }
+
+                    romPathOverride = args[++i];
+                    continue;
+                }
+
+                positionalArgs.Add(arg);
+            }
+
+            if (string.IsNullOrWhiteSpace(romPathOverride))
+                romPathOverride = null;
+
+            string[] launchArgs = positionalArgs.ToArray();
+            string? startupRomPath = launchArgs.Length > 0 ? launchArgs[0] : null;
+            string? romDirectoryOverride = null;
+
+            // --rompath accepts either a ROM file or a directory containing .gb files.
+            if (romPathOverride != null)
+            {
+                if (Directory.Exists(romPathOverride))
+                    romDirectoryOverride = romPathOverride;
+                else
+                    startupRomPath = romPathOverride;
+            }
 
             // Register native library resolver so SDL2 can be found on all platforms
             SDL.RegisterResolver();
@@ -46,20 +93,38 @@ namespace GameboyEmu
                 bool selectedFromCommandLine = false;
                 bool gameRomAvailable = false;
 
-                if (args.Length > 0 && keepRunning)
+                if (startupRomPath != null && keepRunning)
                 {
                     // Command-line argument takes priority (first iteration only)
-                    romPath = args[0];
+                    romPath = startupRomPath;
                     selectedFromCommandLine = true;
                     gameRomAvailable = File.Exists(romPath);
-                    args = Array.Empty<string>(); // clear so subsequent loops show menu
+                    startupRomPath = null; // clear so subsequent loops show menu
                 }
                 else
                 {
                     // Scan the ROMs folder for .gb files
-                    string romsDir = Path.Combine(AppContext.BaseDirectory, "ROMs");
-                    if (!Directory.Exists(romsDir))
-                        romsDir = "ROMs";
+                    string romsDir;
+                    if (romDirectoryOverride != null)
+                    {
+                        romsDir = romDirectoryOverride;
+                        if (!Directory.Exists(romsDir))
+                        {
+                            const string title = "ROM path not found.";
+                            string details = $"The --rompath directory does not exist: {romsDir}";
+                            Console.WriteLine(title);
+                            Console.WriteLine(details);
+                            display.ShowStartupError(title, details);
+                            keepRunning = false;
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        romsDir = Path.Combine(AppContext.BaseDirectory, "ROMs");
+                        if (!Directory.Exists(romsDir))
+                            romsDir = "ROMs";
+                    }
 
                     if (Directory.Exists(romsDir))
                     {
@@ -108,7 +173,9 @@ namespace GameboyEmu
                     }
 
                     const string title = "No game ROMs found.";
-                    const string details = "Place at least one .gb file in the ROMs folder.";
+                    string details = romDirectoryOverride != null
+                        ? $"Place at least one .gb file in: {romDirectoryOverride}"
+                        : "Place at least one .gb file in the ROMs folder.";
 
                     Console.WriteLine(title);
                     Console.WriteLine(details);
@@ -123,6 +190,17 @@ namespace GameboyEmu
                     if (selectedFromCommandLine)
                         keepRunning = false;
                     continue;
+                }
+
+                if (romPath != null && !File.Exists(romPath))
+                {
+                    const string title = "ROM file not found.";
+                    string details = $"Could not find ROM at path: {romPath}";
+                    Console.WriteLine(title);
+                    Console.WriteLine(details);
+                    display.ShowStartupError(title, details);
+                    keepRunning = false;
+                    break;
                 }
 
                 var gb = new GameBoy();

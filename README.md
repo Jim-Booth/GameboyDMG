@@ -115,6 +115,13 @@ You can also pass a ROM path directly:
 dotnet run --project GameboyEmu.csproj path/to/game.gb
 ```
 
+To override the default ROM location, use `--rompath` with either a ROM file or a directory:
+
+```bash
+dotnet run --project GameboyEmu.csproj --rompath path/to/tests
+dotnet run --project GameboyEmu.csproj --rompath path/to/game.gb
+```
+
 To skip the boot ROM animation even when `dmg_boot.bin` is present, use the `--nobootrom` switch:
 
 ```bash

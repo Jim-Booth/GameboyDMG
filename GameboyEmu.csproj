@@ -40,9 +40,23 @@
     <None Update="dmg_boot.bin">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="ROMs\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
   </ItemGroup>
+
+  <ItemGroup>
+    <RomFiles Include="ROMs/**/*.*" Exclude="ROMs/**/.DS_Store" />
+  </ItemGroup>
+
+  <Target Name="CopyRomFilesToOutput" AfterTargets="Build">
+    <Copy
+      SourceFiles="@(RomFiles)"
+      DestinationFiles="@(RomFiles->'$(OutDir)ROMs/%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+
+    <ItemGroup>
+      <OutputRomMetadataFiles Include="$(OutDir)ROMs/**/.DS_Store" />
+    </ItemGroup>
+
+    <Delete Files="@(OutputRomMetadataFiles)" />
+  </Target>
 
 </Project>
