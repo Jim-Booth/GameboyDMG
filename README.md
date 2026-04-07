@@ -105,27 +105,29 @@ dotnet build GameboyEmu.csproj
 dotnet run --project GameboyEmu.csproj
 ```
 
-Place `.gb` ROM files in a `ROMs/` folder in the project root. The emulator will display a selection menu on launch.
+Place `.gb` ROM files in a `ROMs/` folder in the project root. The emulator will display a selection menu on launch. Subfolders under `ROMs/` are supported and will appear as navigable directories in the menu.
 
 To use the boot ROM, place `dmg_boot.bin` in the project root directory (the same folder as `GameboyEmu.csproj`).
 
-You can also pass a ROM path directly:
+### Command-Line Options
+
+| Option | Description |
+|--------|-------------|
+| `path/to/game.gb` | Launch a specific ROM directly, bypassing the menu |
+| `--rompath <path>` | Override the ROM source — accepts a `.gb` file or a directory of ROMs |
+| `--nobootrom` | Skip the boot ROM animation even when `dmg_boot.bin` is present |
+
+Options can be combined freely:
 
 ```bash
+# Launch a specific ROM
 dotnet run --project GameboyEmu.csproj path/to/game.gb
-```
 
-To override the default ROM location, use `--rompath` with either a ROM file or a directory:
-
-```bash
+# Open the ROM menu pointing at a different folder (e.g. a test ROM suite)
 dotnet run --project GameboyEmu.csproj --rompath path/to/tests
-dotnet run --project GameboyEmu.csproj --rompath path/to/game.gb
-```
 
-To skip the boot ROM animation even when `dmg_boot.bin` is present, use the `--nobootrom` switch:
-
-```bash
-dotnet run --project GameboyEmu.csproj --nobootrom path/to/game.gb
+# Launch a specific ROM from a custom path, skipping the boot ROM
+dotnet run --project GameboyEmu.csproj --rompath path/to/game.gb --nobootrom
 ```
 
 ## Project Structure
