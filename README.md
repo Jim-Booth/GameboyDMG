@@ -80,7 +80,7 @@ A Game Boy (DMG) emulator written in C# targeting .NET 9.0, using SDL2 for cross
 | `mem_timing-2` | Pass | Extended memory timing checks pass. |
 | `oam_bug` | Pass | OAM corruption behavior checks pass. |
 | `halt_bug` | Pass | HALT bug behavior checks pass. |
-| `dmg_sound` | Fail | Sub-cycle APU timing behavior is not yet fully matched. |
+| `dmg_sound` | Fail | Fails #9 & #12 Sub-cycle APU timing behavior. |
 | `interrupt_time` | Fail (expected) | This ROM is CGB-only and is skipped by the DMG guard. |
 
 ## Controls
