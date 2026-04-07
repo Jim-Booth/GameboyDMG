@@ -565,10 +565,10 @@ namespace GameboyEmu.Core
         private void DrawViewportBevel()
         {
             const int BevelWidth = 4;
-            int vw = ScreenWidth  * Scale;   // viewport pixel width
+            int vw = ScreenWidth * Scale;   // viewport pixel width
             int vh = ScreenHeight * Scale;   // viewport pixel height
-            int x  = GameX;
-            int y  = GameY;
+            int x = GameX;
+            int y = GameY;
 
             SDL.SDL_SetRenderDrawBlendMode(_renderer, SDL.SDL_BlendMode.SDL_BLENDMODE_BLEND);
 
