@@ -583,7 +583,7 @@ namespace GameboyEmu.Core
             }
 
             // --- light highlight: bottom and right edges ---
-            SDL.SDL_SetRenderDrawColor(_renderer, 255, 255, 255, 80);
+            SDL.SDL_SetRenderDrawColor(_renderer, 255, 255, 255, 20);
             for (int i = 0; i < BevelWidth; i++)
             {
                 // bottom
