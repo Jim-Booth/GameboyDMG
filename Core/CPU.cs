@@ -58,14 +58,6 @@ namespace GameboyEmu.Core
             memory.WriteByteToMemory(addr, value);
             Tick4();
         }
-        // Executes read word.
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private uint ReadWord(uint addr)
-        {
-            byte lo = ReadByte(addr);
-            byte hi = ReadByte(addr + 1);
-            return (uint)(hi << 8 | lo);
-        }
         // Executes write word.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void WriteWord(uint addr, uint value)

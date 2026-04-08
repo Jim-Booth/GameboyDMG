@@ -64,31 +64,11 @@ namespace GameboyEmu.Core
             H = ((a & 0xF) + (b & 0xF)) > 0xF;
         }
 
-        // Executes set half carry add.
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetHalfCarryAdd(byte a, byte b, bool carry)
-        {
-            if (carry)
-                H = ((a & 0xF) + (b & 0xF) + (C ? 1 : 0)) > 0xF;
-            else
-                H = ((a & 0xF) + (b & 0xF)) > 0xF;
-        }
-
         // Executes set half carry sub.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void SetHalfCarrySub(byte a, byte b)
         {
             H = (a & 0xF) < (b & 0xF);
-        }
-
-        // Executes set half carry sub.
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetHalfCarrySub(byte a, byte b, bool carry)
-        {
-            if (carry)
-                H = (a & 0xF) < (b & 0xF) + (C ? 1 : 0);
-            else
-                H = (a & 0xF) < (b & 0xF);
         }
     }
 }

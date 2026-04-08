@@ -80,16 +80,6 @@ namespace GameboyEmu.Core
             _mmu = mmu;
         }
 
-        // Executes test bit.
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static bool TestBit(byte data, int bitPos)
-            => (data & (1 << bitPos)) != 0;
-
-        // Executes set bit.
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static byte SetBit(int reg, int bit, int val)
-            => val == 1 ? (byte)(reg | (1 << bit)) : (byte)(reg & ~(1 << bit));
-
         // Executes request interrupt.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void RequestInterrupt(int id)
@@ -257,21 +247,6 @@ namespace GameboyEmu.Core
             lycWasMatching = lycMatching;
 
             mem[0xFF41] = status;
-        }
-
-        // Executes count sprites on line.
-        private int CountSpritesOnLine(int scanline)
-        {
-            byte[] mem = _mmu.Memory;
-            int ysize = (mem[0xFF40] & 0x04) != 0 ? 16 : 8;
-            int count = 0;
-            for (int sprite = 0; sprite < 40 && count < 10; sprite++)
-            {
-                byte yPos = (byte)(mem[0xFE00 + sprite * 4] - 16);
-                if (scanline >= yPos && scanline < yPos + ysize)
-                    count++;
-            }
-            return count;
         }
 
         // Executes compute mode3 duration.
