@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // Project:     GameboyEmu
 // File:        Core/Flags.cs
 // Description: CPU flag register helpers (Z, N, H, C) for pack/unpack and
@@ -22,14 +22,10 @@ namespace GameboyEmu.Core
         public bool H;
         public bool C;
 
-        //   7 6 5 4 3 2 1 0
-        //   Z N H C 0 0 0 0
+        // Executes to byte.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public byte ToByte()
         {
-            // Branchless: Unsafe.As<bool,byte> returns 0 or 1 for well-formed bools.
-            // Fallback to conditional to stay safe, but the JIT will likely
-            // convert these to cmov anyway on x64.
             return (byte)(
                 (Z ? 0x80 : 0) |
                 (N ? 0x40 : 0) |
@@ -37,6 +33,7 @@ namespace GameboyEmu.Core
                 (C ? 0x10 : 0));
         }
 
+        // Executes from byte.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void FromByte(byte bits, byte mask)
         {
@@ -46,26 +43,28 @@ namespace GameboyEmu.Core
             if ((mask & 0x10) != 0) C = (bits & 0x10) != 0;
         }
 
+        // Executes update carry flag.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void UpdateCarryFlag(int value)
         {
             C = (value >> 8) != 0;
         }
 
+        // Executes update zero flag.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void UpdateZeroFlag(int value)
         {
             Z = (byte)value == 0;
         }
 
-        // --- Half-carry: separate overloads to avoid branch on optional param ---
-
+        // Executes set half carry add.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void SetHalfCarryAdd(byte a, byte b)
         {
             H = ((a & 0xF) + (b & 0xF)) > 0xF;
         }
 
+        // Executes set half carry add.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void SetHalfCarryAdd(byte a, byte b, bool carry)
         {
@@ -75,12 +74,14 @@ namespace GameboyEmu.Core
                 H = ((a & 0xF) + (b & 0xF)) > 0xF;
         }
 
+        // Executes set half carry sub.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void SetHalfCarrySub(byte a, byte b)
         {
             H = (a & 0xF) < (b & 0xF);
         }
 
+        // Executes set half carry sub.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void SetHalfCarrySub(byte a, byte b, bool carry)
         {

@@ -28,21 +28,14 @@ namespace GameboyEmu.Core
 
         public int ScanLineCounter = CyclesPerScanline;
 
-        // ---- Flat packed-ARGB pixel buffer: row-major [y * 160 + x] ----
         private readonly uint[] _screenBuffer = new uint[Width * Height];
 
-        // Raw BG/Window colour index (0-3) per pixel — used for sprite BG priority.
         private readonly byte[] _bgColorIndex = new byte[Width * Height];
 
-        /// <summary>Packed ARGB pixel buffer — zero-copy access for the display.</summary>
         public uint[] ScreenBuffer => _screenBuffer;
 
-        // ---- Pre-computed palette LUT ----
-        // For every possible palette register value (0-255) × colour index (0-3)
-        // we store the final packed ARGB colour.
         private static readonly uint[] PaletteLUT = new uint[256 * 4];
 
-        // ---- Sprite sorting — pre-allocated arrays (no List<>/closure allocs) ----
         private readonly int[] _spriteOam = new int[10];
         private readonly byte[] _spriteX = new byte[10];
         private readonly byte[] _spriteY = new byte[10];
@@ -50,28 +43,25 @@ namespace GameboyEmu.Core
         private readonly byte[] _spriteAttr = new byte[10];
         private int _spriteCount;
 
-        // Current Mode 3 duration for this scanline.
         private int currentMode3Duration = 172;
         private bool scanLineRendered = false;
         private bool lycWasMatching = false;
 
-        // Window internal line counter.
         private int windowLineCounter = 0;
         private bool windowWasRenderedThisLine = false;
 
         private bool _frameReady;
         private int _lcdEnableElapsed = -1;
 
-        // ---- Static constructor: build palette LUT once ----
+        // Executes ppu.
         static PPU()
         {
-            // Game Boy green palette: mapped colour 0-3 → packed ARGB
             uint[] colours =
             [
-                0xFF9BBC0F, // White      (155, 188, 15)
-                0xFF8BAC0F, // LightGray  (139, 172, 15)
-                0xFF306230, // DarkGray   (48,  98,  48)
-                0xFF0F380F  // Black      (15,  56,  15)
+                0xFF9BBC0F,
+                0xFF8BAC0F,
+                0xFF306230,
+                0xFF0F380F
             ];
 
             for (int pal = 0; pal < 256; pal++)
@@ -84,35 +74,34 @@ namespace GameboyEmu.Core
             }
         }
 
+        // Initializes ppu.
         public PPU(MMU mmu)
         {
             _mmu = mmu;
         }
 
-        // ----- Bit helpers (inlined for hot paths) -----
-
+        // Executes test bit.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool TestBit(byte data, int bitPos)
             => (data & (1 << bitPos)) != 0;
 
+        // Executes set bit.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static byte SetBit(int reg, int bit, int val)
             => val == 1 ? (byte)(reg | (1 << bit)) : (byte)(reg & ~(1 << bit));
 
+        // Executes request interrupt.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void RequestInterrupt(int id)
             => _mmu.IF = (byte)(_mmu.IF | (1 << id));
 
-        // ----- Public API -----
-
+        // Executes update.
         public void Update(int cycles)
         {
-            // Intentional fast-path alias: PPU owns these register/VRAM/OAM reads in tight loops.
             byte[] mem = _mmu.Memory;
 
             if ((mem[0xFF40] & 0x80) == 0)
             {
-                // LCD off: reset scanline state and report mode 0.
                 ScanLineCounter = CyclesPerScanline;
                 mem[0xFF44] = 0;
                 scanLineRendered = false;
@@ -131,33 +120,27 @@ namespace GameboyEmu.Core
 
             ScanLineCounter -= cycles;
 
-            // Scanline boundary crossed - advance to next line
             if (ScanLineCounter <= 0)
             {
                 ScanLineCounter += CyclesPerScanline;
                 scanLineRendered = false;
 
-                // Advance LY
                 mem[0xFF44]++;
 
-                // VBlank: LY reaches 144
                 if (mem[0xFF44] == 144)
                 {
                     RequestInterrupt(0);
                     _frameReady = true;
                 }
 
-                // Wrap after line 153
                 if (mem[0xFF44] > 153)
                     mem[0xFF44] = 0;
 
-                // Reset window line counter at the start of a new frame
                 if (mem[0xFF44] == 0)
                     windowLineCounter = 0;
             }
 
-            // Draw scanline when entering Mode 3 (after 80 cycles of Mode 2)
-            if (!scanLineRendered && ScanLineCounter <= 376 // 456 - 80
+            if (!scanLineRendered && ScanLineCounter <= 376
                 && mem[0xFF44] < 144)
             {
                 windowWasRenderedThisLine = false;
@@ -166,13 +149,13 @@ namespace GameboyEmu.Core
                     windowLineCounter++;
                 scanLineRendered = true;
 
-                // Compute variable Mode 3 duration using SCX/window/object penalties.
                 currentMode3Duration = ComputeMode3Duration(mem[0xFF44]);
             }
 
             SetLCDStatus();
         }
 
+        // Executes dma transfer.
         public void DMATransfer(byte value)
         {
             uint address = (uint)(value << 8);
@@ -180,6 +163,7 @@ namespace GameboyEmu.Core
                 _mmu.WriteByteToMemory((uint)(0xFE00 + i), _mmu.ReadByteFromMemory(address + (uint)i));
         }
 
+        // Executes consume frame ready.
         public bool ConsumeFrameReady()
         {
             bool ready = _frameReady;
@@ -187,6 +171,7 @@ namespace GameboyEmu.Core
             return ready;
         }
 
+        // Executes read ly for cpu.
         public byte ReadLyForCpu()
         {
             byte ly = _mmu.Memory[0xFF44];
@@ -197,6 +182,7 @@ namespace GameboyEmu.Core
             return reported;
         }
 
+        // Executes on lcdc write.
         public void OnLcdcWrite(byte oldValue, byte newValue)
         {
             bool wasEnabled = (oldValue & 0x80) != 0;
@@ -214,8 +200,7 @@ namespace GameboyEmu.Core
             _lcdEnableElapsed = 0;
         }
 
-        // ----- Internal methods -----
-
+        // Executes set lcd status.
         private void SetLCDStatus()
         {
             byte[] mem = _mmu.Memory;
@@ -241,6 +226,7 @@ namespace GameboyEmu.Core
                     status = (byte)((status & 0xFC) | 0x02);
                     reqInt = (status & 0x20) != 0;
                 }
+                // Executes if.
                 else if (ScanLineCounter >= mode3bounds)
                 {
                     mode = 3;
@@ -254,11 +240,9 @@ namespace GameboyEmu.Core
                 }
             }
 
-            // Fire STAT interrupt only on mode TRANSITION
             if (reqInt && (mode != currentmode))
                 RequestInterrupt(1);
 
-            // LYC coincidence: fire only on RISING EDGE (transition to match)
             bool lycMatching = (currentline == mem[0xFF45]);
             if (lycMatching)
             {
@@ -275,10 +259,7 @@ namespace GameboyEmu.Core
             mem[0xFF41] = status;
         }
 
-        /// <summary>
-        /// Counts how many sprites are visible on the given scanline (max 10).
-        /// Used to compute variable Mode 3 duration.
-        /// </summary>
+        // Executes count sprites on line.
         private int CountSpritesOnLine(int scanline)
         {
             byte[] mem = _mmu.Memory;
@@ -293,6 +274,7 @@ namespace GameboyEmu.Core
             return count;
         }
 
+        // Executes compute mode3 duration.
         private int ComputeMode3Duration(int scanline)
         {
             byte[] mem = _mmu.Memory;
@@ -324,7 +306,6 @@ namespace GameboyEmu.Core
                 }
             }
 
-            // Left-to-right order with ties by OAM index (lowest first).
             for (int i = 1; i < spriteCount; i++)
             {
                 int j = i;
@@ -339,20 +320,18 @@ namespace GameboyEmu.Core
                 }
             }
 
-            bool[] seenTile = new bool[64]; // 32 BG tiles + 32 Window tiles in a scanline
+            bool[] seenTile = new bool[64];
 
             for (int i = 0; i < spriteCount; i++)
             {
                 int x = spriteX[i];
 
-                // Pan Docs: OAM X=0 (x=-8) has a fixed 11-dot penalty.
                 if (x == -8)
                 {
                     duration += 11;
                     continue;
                 }
 
-                // Entirely off-screen right contributes no penalty.
                 if (x >= Width)
                     continue;
 
@@ -379,6 +358,7 @@ namespace GameboyEmu.Core
             return duration;
         }
 
+        // Executes draw scan line.
         private void DrawScanLine()
         {
             byte[] mem = _mmu.Memory;
@@ -393,9 +373,8 @@ namespace GameboyEmu.Core
             }
             else
             {
-                // BG disabled: fill with colour 0 from BG palette
                 byte palette = mem[0xFF47];
-                uint col = PaletteLUT[palette * 4]; // colour index 0
+                uint col = PaletteLUT[palette * 4];
                 int rowBase = currentLine * Width;
                 for (int pixel = 0; pixel < Width; pixel++)
                 {
@@ -406,6 +385,7 @@ namespace GameboyEmu.Core
             RenderSprites(lcdControl, currentLine);
         }
 
+        // Executes render tiles.
         private void RenderTiles(byte lcdControl, byte currentLine)
         {
             byte[] mem = _mmu.Memory;
@@ -433,7 +413,6 @@ namespace GameboyEmu.Core
             int rowBase = currentLine * Width;
             int palBase = bgPalette * 4;
 
-            // Cache tile row data to avoid re-reading for every pixel in the same tile
             int cachedTileX = -1;
             bool cachedIsWindow = false;
             byte data1 = 0, data2 = 0;
@@ -461,7 +440,6 @@ namespace GameboyEmu.Core
 
                 int tileX = xPos >> 3;
 
-                // Only re-fetch tile data when crossing a tile boundary or BG↔Window switch
                 if (tileX != cachedTileX || useWindow != cachedIsWindow)
                 {
                     cachedTileX = tileX;
@@ -489,6 +467,7 @@ namespace GameboyEmu.Core
             }
         }
 
+        // Executes render sprites.
         private void RenderSprites(byte lcdControl, byte scanline)
         {
             if ((lcdControl & 0x02) == 0) return;
@@ -497,7 +476,6 @@ namespace GameboyEmu.Core
             bool use8x16 = (lcdControl & 0x04) != 0;
             int ysize = use8x16 ? 16 : 8;
 
-            // Collect visible sprites into pre-allocated arrays (zero allocation)
             _spriteCount = 0;
             for (int sprite = 0; sprite < 40 && _spriteCount < 10; sprite++)
             {
@@ -514,7 +492,6 @@ namespace GameboyEmu.Core
                 }
             }
 
-            // Insertion sort in reverse priority order (≤10 items, no allocation)
             for (int i = 1; i < _spriteCount; i++)
             {
                 int j = i;

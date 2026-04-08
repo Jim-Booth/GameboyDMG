@@ -23,11 +23,11 @@ namespace GameboyEmu
 {
     internal static class Program
     {
+        // Executes main.
         static void Main(string[] args)
         {
             Console.WriteLine("GameBoy Emulator starting...");
 
-            // Parse command-line options.
             bool noBoot = false;
             string? romPathOverride = null;
             var positionalArgs = new List<string>();
@@ -68,7 +68,6 @@ namespace GameboyEmu
             string? startupRomPath = launchArgs.Length > 0 ? launchArgs[0] : null;
             string? romDirectoryOverride = null;
 
-            // --rompath accepts either a ROM file or a directory containing .gb files.
             if (romPathOverride != null)
             {
                 if (Directory.Exists(romPathOverride))
@@ -77,12 +76,10 @@ namespace GameboyEmu
                     startupRomPath = romPathOverride;
             }
 
-            // Register native library resolver so SDL2 can be found on all platforms
             SDL.RegisterResolver();
 
             using var display = new SDLDisplay();
 
-            // --- Game session loop: returns to menu on reset ---
             bool keepRunning = true;
             int lastMenuSelected = 0;
             int lastMenuScrollOffset = 0;
@@ -95,15 +92,13 @@ namespace GameboyEmu
 
                 if (startupRomPath != null && keepRunning)
                 {
-                    // Command-line argument takes priority (first iteration only)
                     romPath = startupRomPath;
                     selectedFromCommandLine = true;
                     gameRomAvailable = File.Exists(romPath);
-                    startupRomPath = null; // clear so subsequent loops show menu
+                    startupRomPath = null;
                 }
                 else
                 {
-                    // Scan the ROMs folder for .gb files
                     string romsDir;
                     if (romDirectoryOverride != null)
                     {
@@ -132,7 +127,6 @@ namespace GameboyEmu
                             .OrderBy(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase)
                             .ToList();
 
-                        // No ROMs in the root folder — check subdirectories
                         if (romFiles.Count == 0)
                         {
                             romFiles = Directory.GetFiles(romsDir, "*.gb", SearchOption.AllDirectories)
@@ -162,7 +156,6 @@ namespace GameboyEmu
 
                             if (romPath == null)
                             {
-                                // User closed the window during menu
                                 keepRunning = false;
                                 break;
                             }
@@ -170,12 +163,10 @@ namespace GameboyEmu
                     }
                 }
 
-                // --- Create GameBoy and load ROM ---
                 if (romPath == null)
                 {
                     if (gameRomAvailable)
                     {
-                        // ROMs exist, but none selected/launched in this iteration.
                         keepRunning = false;
                         break;
                     }
@@ -225,7 +216,6 @@ namespace GameboyEmu
                     Console.WriteLine("No ROMs found — running boot ROM only.");
                 }
 
-                // Wire the SDL display into the emulation loop
                 gb.OnFrameReady = () =>
                 {
                     display.PollEvents(gb);
@@ -236,12 +226,11 @@ namespace GameboyEmu
                 gb.Start();
 
                 bool wasReset = gb.ResetRequested;
-                gb.mMU.SaveBattery(); // Save battery-backed RAM before cleanup
+                gb.mMU.SaveBattery();
                 gb.aPU.Dispose();
 
                 if (!wasReset)
                 {
-                    // User pressed Escape or closed the window — exit entirely
                     keepRunning = false;
                 }
                 else
@@ -253,6 +242,7 @@ namespace GameboyEmu
             Console.WriteLine("Emulator stopped.");
         }
 
+        // Executes is cgb only rom.
         private static bool IsCgbOnlyRom(string romPath, out byte cgbFlag)
         {
             cgbFlag = 0x00;

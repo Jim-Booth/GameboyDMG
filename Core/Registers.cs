@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // Project:     GameboyEmu
 // File:        Core/Registers.cs
 // Description: CPU register file definitions and 8-bit/16-bit pair accessors
@@ -30,14 +30,17 @@ namespace GameboyEmu.Core
 
         public byte F
         {
+            // Gets the value.
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => Flags.ToByte();
+            // Sets the value.
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             set => Flags.FromByte(value, 0xF0);
         }
 
         public uint AF
         {
+            // Gets the value.
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => (uint)A << 8 | (uint)F;
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -50,6 +53,7 @@ namespace GameboyEmu.Core
 
         public uint BC
         {
+            // Gets the value.
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => (uint)B << 8 | C;
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -62,6 +66,7 @@ namespace GameboyEmu.Core
 
         public uint DE
         {
+            // Gets the value.
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => (uint)D << 8 | E;
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -74,6 +79,7 @@ namespace GameboyEmu.Core
 
         public uint HL
         {
+            // Gets the value.
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => (uint)H << 8 | L;
             [MethodImpl(MethodImplOptions.AggressiveInlining)]

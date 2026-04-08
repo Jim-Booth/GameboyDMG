@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // Project:     GameboyEmu
 // File:        Core/GameBoy.cs
 // Description: System orchestrator - coordinates CPU, MMU, PPU, and APU,
@@ -23,6 +23,7 @@ namespace GameboyEmu.Core
 {
     public sealed class GameBoy
     {
+        // Defines the oam bug access type enum.
         internal enum OamBugAccessType
         {
             Read,
@@ -57,24 +58,25 @@ namespace GameboyEmu.Core
         byte keypadState = 0xFF;
 
         private bool _useBootROM;
+        // Gets or sets reset requested.
         public bool ResetRequested { get; set; }
 
+        // Gets or sets is running.
         public bool IsRunning { get; set; }
         private readonly Stopwatch _runTimer = new();
         private long _emulatedCycles;
         private int _cyclesUntilPace = CyclesPerFrame;
         private Action? _onFrameReady;
 
-        /// <summary>
-        /// Called when a completed frame reaches the paced presentation boundary.
-        /// Hook this up to your display to render the screen and poll input.
-        /// </summary>
         public Action? OnFrameReady
         {
+            // Gets the value.
             get => _onFrameReady;
+            // Sets the value.
             set => _onFrameReady = value;
         }
 
+        // Initializes game boy.
         public GameBoy()
         {
             mMU = new(this);
@@ -84,9 +86,9 @@ namespace GameboyEmu.Core
             mMU.Apu = aPU;
         }
 
+        // Executes load cartridge.
         public void LoadCartridge(string path, int size, bool skipBootROM = false)
         {
-            // Bulk cartridge staging is done via direct arrays; MMU methods are for bus-visible accesses.
             Array.Copy(File.ReadAllBytes(path), 0, mMU!.Cartridge, 0, size);
             Array.Copy(mMU!.Cartridge, 0, mMU!.Memory, 0, 0x8000);
             mMU!.CurrentROMBank = 1;
@@ -94,8 +96,6 @@ namespace GameboyEmu.Core
 
             if (!skipBootROM && File.Exists("dmg_boot.bin"))
             {
-                // Run the boot ROM: back up the first 0xFF bytes of the
-                // cartridge so they can be restored after the boot sequence.
                 Array.Copy(mMU!.Cartridge, 0, tempROM, 0, 0xFF);
                 Array.Copy(File.ReadAllBytes("dmg_boot.bin"), 0, mMU!.Memory, 0x00, 0xFF);
                 cPU!.registers.PC = 0x00;
@@ -103,7 +103,6 @@ namespace GameboyEmu.Core
             }
             else
             {
-                // No boot ROM — jump straight to post-boot state.
                 if (skipBootROM)
                     Console.WriteLine("Boot ROM bypassed (--nobootrom).");
                 InitialiseGameboyForCartridge(0x100);
@@ -112,14 +111,16 @@ namespace GameboyEmu.Core
             }
         }
 
+        // Executes post boot rom copy.
         public void PostBootROMCopy()
         {
-            Array.Copy(tempROM, 0, mMU!.Memory, 0, tempROM.Length); // replace kernal at 0x00 with temp memory
+            Array.Copy(tempROM, 0, mMU!.Memory, 0, tempROM.Length);
             cPU!.registers.PC = 0x100;
             mMU!.InitROMBanks();
             _useBootROM = false;
         }
 
+        // Executes initialise gameboy for cartridge.
         private void InitialiseGameboyForCartridge(uint startPC)
         {
             cPU!.registers.PC = startPC;
@@ -172,7 +173,7 @@ namespace GameboyEmu.Core
             _dmaTicksToNextByte = 0;
         }
 
-
+        // Executes start.
         public void Start()
         {
             IsRunning = true;
@@ -191,15 +192,11 @@ namespace GameboyEmu.Core
 
                 if (cPU.IsHalted)
                 {
-                    // HALT runs in 4T idle steps, but if an interrupt is already pending,
-                    // wake immediately and let interrupt handling proceed this boundary.
                     if ((mMU!.IF & mMU.IE & 0x1F) == 0)
                         AdvanceHardware(4);
                 }
                 else
                 {
-                    // M-cycle accurate: advance 4T for the opcode fetch, then
-                    // Execute() advances remaining M-cycles internally.
                     byte opcode = mMU!.ReadByteFromMemory(cPU!.registers.PC++);
                     AdvanceHardware(4);
                     cPU.Execute(opcode);
@@ -212,6 +209,7 @@ namespace GameboyEmu.Core
             IsRunning = false;
         }
 
+        // Executes advance hardware.
         private void AdvanceHardware(int cycles)
         {
             if (cycles <= 0)
@@ -226,21 +224,25 @@ namespace GameboyEmu.Core
                 PresentCompletedFrame();
         }
 
+        // Executes advance hardware from cpu.
         public void AdvanceHardwareFromCpu(int cycles)
         {
             AdvanceHardware(cycles);
         }
 
+        // Executes on lcdc write.
         public void OnLcdcWrite(byte oldValue, byte newValue)
         {
             pPU.OnLcdcWrite(oldValue, newValue);
         }
 
+        // Executes read ly for cpu.
         public byte ReadLyForCpu()
         {
             return pPU.ReadLyForCpu();
         }
 
+        // Executes pace to real time.
         private bool PaceToRealTime(int cycles)
         {
             _emulatedCycles += cycles;
@@ -273,15 +275,15 @@ namespace GameboyEmu.Core
             return true;
         }
 
+        // Executes present completed frame.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void PresentCompletedFrame()
         {
-            // Always invoke the presentation callback at paced boundaries so
-            // frontend event processing continues even when LCD output is off.
             pPU.ConsumeFrameReady();
             _onFrameReady?.Invoke();
         }
 
+        // Executes update timers.
         private void UpdateTimers(int cycles)
         {
             for (int i = 0; i < cycles; i++)
@@ -299,7 +301,6 @@ namespace GameboyEmu.Core
                 if (oldTimerSignal && !newTimerSignal)
                     IncrementTimaOnTimerEdge();
 
-                // TIMA overflow reload and IF request occur 1 M-cycle (4 T-cycles) after overflow.
                 if (_timaOverflowPending)
                 {
                     _timaOverflowDelay--;
@@ -314,6 +315,7 @@ namespace GameboyEmu.Core
             }
         }
 
+        // Executes get timer signal.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private bool GetTimerSignal()
         {
@@ -323,22 +325,22 @@ namespace GameboyEmu.Core
 
             int bit = (tac & 0x03) switch
             {
-                0x00 => 9, // 4096 Hz
-                0x01 => 3, // 262144 Hz
-                0x02 => 5, // 65536 Hz
-                _ => 7,    // 16384 Hz
+                0x00 => 9,
+                0x01 => 3,
+                0x02 => 5,
+                _ => 7,
             };
 
             return ((_systemCounter >> bit) & 1) != 0;
         }
 
+        // Executes increment tima on timer edge.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void IncrementTimaOnTimerEdge()
         {
             byte tima = mMU!.Memory[0xFF05];
             if (tima == 0xFF)
             {
-                // On overflow TIMA is 0x00 for one M-cycle, then reloads from TMA and requests IF.
                 mMU.Memory[0xFF05] = 0x00;
                 _timaOverflowPending = true;
                 _timaOverflowDelay = 4;
@@ -349,6 +351,7 @@ namespace GameboyEmu.Core
             }
         }
 
+        // Executes update dma.
         private void UpdateDma(int cycles)
         {
             if (!_dmaActive)
@@ -371,12 +374,14 @@ namespace GameboyEmu.Core
             }
         }
 
+        // Executes request interrupt.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void RequestInterrupt(int id)
         {
             mMU!.IF = SetBit(mMU!.IF, id, 1);
         }
 
+        // Executes handle interupts.
         private void HandleInterupts()
         {
             cPU!.UpdateIME();
@@ -390,6 +395,7 @@ namespace GameboyEmu.Core
             }
         }
 
+        // Executes trigger oam bug.
         internal void TriggerOamBug(OamBugAccessType accessType, int mCycleOffset = 0)
         {
             if (!IsOamScanAtOffset(mCycleOffset, out int row))
@@ -409,6 +415,7 @@ namespace GameboyEmu.Core
             }
         }
 
+        // Executes is oam scan at offset.
         private bool IsOamScanAtOffset(int mCycleOffset, out int row)
         {
             row = 0;
@@ -440,12 +447,14 @@ namespace GameboyEmu.Core
             return true;
         }
 
+        // Executes read oam word.
         private ushort ReadOamWord(int row, int word)
         {
             int baseAddr = 0xFE00 + row * 8 + word * 2;
             return (ushort)(mMU!.Memory[baseAddr] | (mMU.Memory[baseAddr + 1] << 8));
         }
 
+        // Executes write oam word.
         private void WriteOamWord(int row, int word, ushort value)
         {
             int baseAddr = 0xFE00 + row * 8 + word * 2;
@@ -453,12 +462,14 @@ namespace GameboyEmu.Core
             mMU.Memory[baseAddr + 1] = (byte)(value >> 8);
         }
 
+        // Executes copy oam row.
         private void CopyOamRow(int srcRow, int dstRow)
         {
             for (int w = 0; w < 4; w++)
                 WriteOamWord(dstRow, w, ReadOamWord(srcRow, w));
         }
 
+        // Executes apply write corruption.
         private void ApplyWriteCorruption(int row)
         {
             if (row <= 0)
@@ -474,6 +485,7 @@ namespace GameboyEmu.Core
                 WriteOamWord(row, w, ReadOamWord(row - 1, w));
         }
 
+        // Executes apply read corruption.
         private void ApplyReadCorruption(int row)
         {
             if (row <= 0)
@@ -489,6 +501,7 @@ namespace GameboyEmu.Core
                 WriteOamWord(row, w, ReadOamWord(row - 1, w));
         }
 
+        // Executes apply read during inc dec corruption.
         private void ApplyReadDuringIncDecCorruption(int row)
         {
             if (row > 3 && row < 19)
@@ -508,12 +521,14 @@ namespace GameboyEmu.Core
             ApplyReadCorruption(row);
         }
 
+        // Executes test bit.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TestBit(byte data, int bitPos)
         {
             return (data & (1 << bitPos)) != 0;
         }
 
+        // Executes set bit.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static byte SetBit(int register, int bitIndex, int newBitValue)
         {
@@ -523,11 +538,13 @@ namespace GameboyEmu.Core
                 return (byte)(register & ~(1 << bitIndex));
         }
 
+        // Executes dma transfer.
         public void DMATransfer(byte value)
         {
             StartDmaTransfer(value);
         }
 
+        // Executes start dma transfer.
         public void StartDmaTransfer(byte value)
         {
             _dmaSourceBase = (ushort)(value << 8);
@@ -536,6 +553,7 @@ namespace GameboyEmu.Core
             _dmaActive = true;
         }
 
+        // Executes write div.
         public void WriteDiv()
         {
             bool oldTimerSignal = GetTimerSignal();
@@ -547,23 +565,22 @@ namespace GameboyEmu.Core
                 IncrementTimaOnTimerEdge();
         }
 
+        // Executes write tac.
         public void WriteTac(byte value)
         {
             bool oldTimerSignal = GetTimerSignal();
             mMU!.Memory[0xFF07] = value;
 
-            // DMG obscure timing: if timer input transitions 1->0 due to TAC write, TIMA ticks once.
             if (oldTimerSignal && !GetTimerSignal())
                 IncrementTimaOnTimerEdge();
         }
 
+        // Executes write tima.
         public void WriteTima(byte value)
         {
-            // Writes during reload cycle are ignored.
             if (_timaReloadBlockTicks > 0)
                 return;
 
-            // Writing TIMA during the pending reload window cancels the pending reload/interrupt.
             if (_timaOverflowPending)
             {
                 _timaOverflowPending = false;
@@ -573,15 +590,16 @@ namespace GameboyEmu.Core
             mMU!.Memory[0xFF05] = value;
         }
 
+        // Executes write tma.
         public void WriteTma(byte value)
         {
             mMU!.Memory[0xFF06] = value;
 
-            // During reload cycle, TMA writes are reflected into TIMA.
             if (_timaReloadBlockTicks > 0)
                 mMU.Memory[0xFF05] = value;
         }
 
+        // Executes keypad key pressed.
         public void KeypadKeyPressed(int key)
         {
             bool previouslySet = !TestBit(keypadState, key);
@@ -594,13 +612,13 @@ namespace GameboyEmu.Core
             else
                 button = false;
 
-            // Read raw FF00 select bits (not MMU read path) to decide whether to request joypad interrupt.
             byte keyReq = mMU!.Memory[0xFF00];
             bool requestInterupt = false;
 
             if (button && !TestBit(keyReq, 5))
                 requestInterupt = true;
 
+            // Executes if.
             else if (!button && !TestBit(keyReq, 4))
                 requestInterupt = true;
 
@@ -608,34 +626,30 @@ namespace GameboyEmu.Core
                 RequestInterrupt(4);
         }
 
+        // Executes keypad key released.
         public void KeypadKeyReleased(int key)
         {
             keypadState = SetBit(keypadState, key, 1);
         }
 
+        // Executes get keypad state.
         public byte GetKeypadState()
         {
-            // Start from raw JOYP register and compose bits 0-3 based on current key matrix state.
             byte reg = mMU!.Memory[0xFF00];
-            // Bits 6-7 always read as 1; start bits 0-3 high (unpressed)
+
             reg |= 0xCF;
 
-            // Bit 4 low = direction keys selected
             if ((reg & 0x10) == 0)
             {
-                // Mix in direction state (lower nibble of keypadState: Right,Left,Up,Down)
                 reg &= (byte)(0xF0 | (keypadState & 0x0F));
             }
 
-            // Bit 5 low = action buttons selected
             if ((reg & 0x20) == 0)
             {
-                // Mix in button state (upper nibble of keypadState shifted to bits 0-3: A,B,Sel,Start)
                 reg &= (byte)(0xF0 | ((keypadState >> 4) & 0x0F));
             }
 
             return reg;
         }
-
     }
 }

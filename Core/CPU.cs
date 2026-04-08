@@ -11,28 +11,23 @@
 // Notice:      Game Boy is a registered trademark of Nintendo Co., Ltd.
 //              This emulator is for educational purposes only.
 // ============================================================================
-
 using System.Runtime.CompilerServices;
-
 namespace GameboyEmu.Core
 {
+    // Executes cpu.
     public sealed class CPU(MMU _memory, GameBoy _gameboy)
     {
         private readonly MMU memory = _memory;
-
         private GameBoy gameboy = _gameboy;
-
         public Registers registers = new();
-
+        // Gets or sets running.
         public bool Running { get; set; } = false;
-
         private bool IME;
         private int _imeEnableDelay;
-
         private bool Halted;
         public bool IsHalted => Halted;
         private bool HaltBug;
-
+        // Executes reset.
         public void Reset()
         {
             registers = new Registers();
@@ -42,20 +37,13 @@ namespace GameboyEmu.Core
             Halted = false;
             HaltBug = false;
         }
-
-        // ==================================================================
-        //  M-cycle–accurate bus helpers
-        //  Each bus access takes exactly one M-cycle (4 T-cycles).
-        //  Tick4() is used for internal M-cycles with no bus activity.
-        // ==================================================================
-
+        // Executes tick4.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void Tick4()
         {
             gameboy.AdvanceHardwareFromCpu(4);
         }
-
-        /// <summary>Timed byte read: performs the memory read then advances 4 T-cycles.</summary>
+        // Executes read byte.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte ReadByte(uint addr)
         {
@@ -63,16 +51,14 @@ namespace GameboyEmu.Core
             Tick4();
             return v;
         }
-
-        /// <summary>Timed byte write: performs the memory write then advances 4 T-cycles.</summary>
+        // Executes write byte.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void WriteByte(uint addr, byte value)
         {
             memory.WriteByteToMemory(addr, value);
             Tick4();
         }
-
-        /// <summary>Timed word read: two consecutive timed byte reads (8 T-cycles total).</summary>
+        // Executes read word.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private uint ReadWord(uint addr)
         {
@@ -80,23 +66,20 @@ namespace GameboyEmu.Core
             byte hi = ReadByte(addr + 1);
             return (uint)(hi << 8 | lo);
         }
-
-        /// <summary>Timed word write: two consecutive timed byte writes (8 T-cycles total).</summary>
+        // Executes write word.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void WriteWord(uint addr, uint value)
         {
             WriteByte(addr + 1, (byte)(value >> 8));
             WriteByte(addr, (byte)value);
         }
-
-        /// <summary>Reads the next byte at PC and increments PC (timed).</summary>
+        // Executes fetch byte.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte FetchByte()
         {
             return ReadByte(registers.PC++);
         }
-
-        /// <summary>Reads the next word at PC and increments PC by 2 (timed).</summary>
+        // Executes fetch word.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private uint FetchWord()
         {
@@ -104,13 +87,7 @@ namespace GameboyEmu.Core
             byte hi = FetchByte();
             return (uint)(hi << 8 | lo);
         }
-
-        // ==================================================================
-        //  Execute – all timing is handled internally via Tick4/ReadByte/WriteByte.
-        //  The main loop advances 4T for the opcode fetch, then calls Execute()
-        //  which handles the remaining M-cycles.  Returns 0.
-        // ==================================================================
-
+        // Executes execute.
         public int Execute(int opcode)
         {
             if (HaltBug)
@@ -118,9 +95,7 @@ namespace GameboyEmu.Core
                 registers.PC--;
                 HaltBug = false;
             }
-
             registers.PC &= 0xFFFF;
-
             switch (opcode)
             {
                 case 0x00: // NOP
@@ -457,133 +432,133 @@ namespace GameboyEmu.Core
                     registers.Flags.H = false;
                     return 0;
                 case 0x40: return 0; // LD B,B
-                case 0x41: registers.B = registers.C; return 0;
-                case 0x42: registers.B = registers.D; return 0;
-                case 0x43: registers.B = registers.E; return 0;
-                case 0x44: registers.B = registers.H; return 0;
-                case 0x45: registers.B = registers.L; return 0;
-                case 0x46: registers.B = ReadByte(registers.HL); return 0;
-                case 0x47: registers.B = registers.A; return 0;
-                case 0x48: registers.C = registers.B; return 0;
+                case 0x41: registers.B = registers.C; return 0; // LD B,C
+                case 0x42: registers.B = registers.D; return 0; // LD B,D
+                case 0x43: registers.B = registers.E; return 0; // LD B,E
+                case 0x44: registers.B = registers.H; return 0; // LD B,H
+                case 0x45: registers.B = registers.L; return 0; // LD B,L
+                case 0x46: registers.B = ReadByte(registers.HL); return 0; // LD B,(HL)
+                case 0x47: registers.B = registers.A; return 0; // LD B,A
+                case 0x48: registers.C = registers.B; return 0; // LD C,B
                 case 0x49: return 0; // LD C,C
-                case 0x4A: registers.C = registers.D; return 0;
-                case 0x4B: registers.C = registers.E; return 0;
-                case 0x4C: registers.C = registers.H; return 0;
-                case 0x4D: registers.C = registers.L; return 0;
-                case 0x4E: registers.C = ReadByte(registers.HL); return 0;
-                case 0x4F: registers.C = registers.A; return 0;
-                case 0x50: registers.D = registers.B; return 0;
-                case 0x51: registers.D = registers.C; return 0;
+                case 0x4A: registers.C = registers.D; return 0; // LD C,D
+                case 0x4B: registers.C = registers.E; return 0; // LD C,E
+                case 0x4C: registers.C = registers.H; return 0; // LD C,H
+                case 0x4D: registers.C = registers.L; return 0; // LD C,L
+                case 0x4E: registers.C = ReadByte(registers.HL); return 0; // LD C,(HL)
+                case 0x4F: registers.C = registers.A; return 0; // LD C,A
+                case 0x50: registers.D = registers.B; return 0; // LD D,B
+                case 0x51: registers.D = registers.C; return 0; // LD D,C
                 case 0x52: return 0; // LD D,D
-                case 0x53: registers.D = registers.E; return 0;
-                case 0x54: registers.D = registers.H; return 0;
-                case 0x55: registers.D = registers.L; return 0;
-                case 0x56: registers.D = ReadByte(registers.HL); return 0;
-                case 0x57: registers.D = registers.A; return 0;
-                case 0x58: registers.E = registers.B; return 0;
-                case 0x59: registers.E = registers.C; return 0;
-                case 0x5A: registers.E = registers.D; return 0;
+                case 0x53: registers.D = registers.E; return 0; // LD D,E
+                case 0x54: registers.D = registers.H; return 0; // LD D,H
+                case 0x55: registers.D = registers.L; return 0; // LD D,L
+                case 0x56: registers.D = ReadByte(registers.HL); return 0; // LD D,(HL)
+                case 0x57: registers.D = registers.A; return 0; // LD D,A
+                case 0x58: registers.E = registers.B; return 0; // LD E,B
+                case 0x59: registers.E = registers.C; return 0; // LD E,C
+                case 0x5A: registers.E = registers.D; return 0; // LD E,D
                 case 0x5B: return 0; // LD E,E
-                case 0x5C: registers.E = registers.H; return 0;
-                case 0x5D: registers.E = registers.L; return 0;
-                case 0x5E: registers.E = ReadByte(registers.HL); return 0;
-                case 0x5F: registers.E = registers.A; return 0;
-                case 0x60: registers.H = registers.B; return 0;
-                case 0x61: registers.H = registers.C; return 0;
-                case 0x62: registers.H = registers.D; return 0;
-                case 0x63: registers.H = registers.E; return 0;
+                case 0x5C: registers.E = registers.H; return 0; // LD E,H
+                case 0x5D: registers.E = registers.L; return 0; // LD E,L
+                case 0x5E: registers.E = ReadByte(registers.HL); return 0; // LD E,(HL)
+                case 0x5F: registers.E = registers.A; return 0; // LD E,A
+                case 0x60: registers.H = registers.B; return 0; // LD H,B
+                case 0x61: registers.H = registers.C; return 0; // LD H,C
+                case 0x62: registers.H = registers.D; return 0; // LD H,D
+                case 0x63: registers.H = registers.E; return 0; // LD H,E
                 case 0x64: return 0; // LD H,H
-                case 0x65: registers.H = registers.L; return 0;
-                case 0x66: registers.H = ReadByte(registers.HL); return 0;
-                case 0x67: registers.H = registers.A; return 0;
-                case 0x68: registers.L = registers.B; return 0;
-                case 0x69: registers.L = registers.C; return 0;
-                case 0x6A: registers.L = registers.D; return 0;
-                case 0x6B: registers.L = registers.E; return 0;
-                case 0x6C: registers.L = registers.H; return 0;
+                case 0x65: registers.H = registers.L; return 0; // LD H,L
+                case 0x66: registers.H = ReadByte(registers.HL); return 0; // LD H,(HL)
+                case 0x67: registers.H = registers.A; return 0; // LD H,A
+                case 0x68: registers.L = registers.B; return 0; // LD L,B
+                case 0x69: registers.L = registers.C; return 0; // LD L,C
+                case 0x6A: registers.L = registers.D; return 0; // LD L,D
+                case 0x6B: registers.L = registers.E; return 0; // LD L,E
+                case 0x6C: registers.L = registers.H; return 0; // LD L,H
                 case 0x6D: return 0; // LD L,L
-                case 0x6E: registers.L = ReadByte(registers.HL); return 0;
-                case 0x6F: registers.L = registers.A; return 0;
-                case 0x70: WriteByte(registers.HL, registers.B); return 0;
-                case 0x71: WriteByte(registers.HL, registers.C); return 0;
-                case 0x72: WriteByte(registers.HL, registers.D); return 0;
-                case 0x73: WriteByte(registers.HL, registers.E); return 0;
-                case 0x74: WriteByte(registers.HL, registers.H); return 0;
-                case 0x75: WriteByte(registers.HL, registers.L); return 0;
+                case 0x6E: registers.L = ReadByte(registers.HL); return 0; // LD L,(HL)
+                case 0x6F: registers.L = registers.A; return 0; // LD L,A
+                case 0x70: WriteByte(registers.HL, registers.B); return 0; // LD (HL),B
+                case 0x71: WriteByte(registers.HL, registers.C); return 0; // LD (HL),C
+                case 0x72: WriteByte(registers.HL, registers.D); return 0; // LD (HL),D
+                case 0x73: WriteByte(registers.HL, registers.E); return 0; // LD (HL),E
+                case 0x74: WriteByte(registers.HL, registers.H); return 0; // LD (HL),H
+                case 0x75: WriteByte(registers.HL, registers.L); return 0; // LD (HL),L
                 case 0x76: Halt(); return 0; // HALT
-                case 0x77: WriteByte(registers.HL, registers.A); return 0;
-                case 0x78: registers.A = registers.B; return 0;
-                case 0x79: registers.A = registers.C; return 0;
-                case 0x7A: registers.A = registers.D; return 0;
-                case 0x7B: registers.A = registers.E; return 0;
-                case 0x7C: registers.A = registers.H; return 0;
-                case 0x7D: registers.A = registers.L; return 0;
-                case 0x7E: registers.A = ReadByte(registers.HL); return 0;
+                case 0x77: WriteByte(registers.HL, registers.A); return 0; // LD (HL),A
+                case 0x78: registers.A = registers.B; return 0; // LD A,B
+                case 0x79: registers.A = registers.C; return 0; // LD A,C
+                case 0x7A: registers.A = registers.D; return 0; // LD A,D
+                case 0x7B: registers.A = registers.E; return 0; // LD A,E
+                case 0x7C: registers.A = registers.H; return 0; // LD A,H
+                case 0x7D: registers.A = registers.L; return 0; // LD A,L
+                case 0x7E: registers.A = ReadByte(registers.HL); return 0; // LD A,(HL)
                 case 0x7F: return 0; // LD A,A
-                case 0x80: ADD(registers.B); return 0;
-                case 0x81: ADD(registers.C); return 0;
-                case 0x82: ADD(registers.D); return 0;
-                case 0x83: ADD(registers.E); return 0;
-                case 0x84: ADD(registers.H); return 0;
-                case 0x85: ADD(registers.L); return 0;
-                case 0x86: ADD(ReadByte(registers.HL)); return 0;
-                case 0x87: ADD(registers.A); return 0;
-                case 0x88: ADC(registers.B); return 0;
-                case 0x89: ADC(registers.C); return 0;
-                case 0x8A: ADC(registers.D); return 0;
-                case 0x8B: ADC(registers.E); return 0;
-                case 0x8C: ADC(registers.H); return 0;
-                case 0x8D: ADC(registers.L); return 0;
-                case 0x8E: ADC(ReadByte(registers.HL)); return 0;
-                case 0x8F: ADC(registers.A); return 0;
-                case 0x90: SUB(registers.B); return 0;
-                case 0x91: SUB(registers.C); return 0;
-                case 0x92: SUB(registers.D); return 0;
-                case 0x93: SUB(registers.E); return 0;
-                case 0x94: SUB(registers.H); return 0;
-                case 0x95: SUB(registers.L); return 0;
-                case 0x96: SUB(ReadByte(registers.HL)); return 0;
-                case 0x97: SUB(registers.A); return 0;
-                case 0x98: SBC(registers.B); return 0;
-                case 0x99: SBC(registers.C); return 0;
-                case 0x9A: SBC(registers.D); return 0;
-                case 0x9B: SBC(registers.E); return 0;
-                case 0x9C: SBC(registers.H); return 0;
-                case 0x9D: SBC(registers.L); return 0;
-                case 0x9E: SBC(ReadByte(registers.HL)); return 0;
-                case 0x9F: SBC(registers.A); return 0;
-                case 0xA0: AND(registers.B); return 0;
-                case 0xA1: AND(registers.C); return 0;
-                case 0xA2: AND(registers.D); return 0;
-                case 0xA3: AND(registers.E); return 0;
-                case 0xA4: AND(registers.H); return 0;
-                case 0xA5: AND(registers.L); return 0;
-                case 0xA6: AND(ReadByte(registers.HL)); return 0;
-                case 0xA7: AND(registers.A); return 0;
-                case 0xA8: XOR(registers.B); return 0;
-                case 0xA9: XOR(registers.C); return 0;
-                case 0xAA: XOR(registers.D); return 0;
-                case 0xAB: XOR(registers.E); return 0;
-                case 0xAC: XOR(registers.H); return 0;
-                case 0xAD: XOR(registers.L); return 0;
-                case 0xAE: XOR(ReadByte(registers.HL)); return 0;
-                case 0xAF: XOR(registers.A); return 0;
-                case 0xB0: OR(registers.B); return 0;
-                case 0xB1: OR(registers.C); return 0;
-                case 0xB2: OR(registers.D); return 0;
-                case 0xB3: OR(registers.E); return 0;
-                case 0xB4: OR(registers.H); return 0;
-                case 0xB5: OR(registers.L); return 0;
-                case 0xB6: OR(ReadByte(registers.HL)); return 0;
-                case 0xB7: OR(registers.A); return 0;
-                case 0xB8: CP(registers.B); return 0;
-                case 0xB9: CP(registers.C); return 0;
-                case 0xBA: CP(registers.D); return 0;
-                case 0xBB: CP(registers.E); return 0;
-                case 0xBC: CP(registers.H); return 0;
-                case 0xBD: CP(registers.L); return 0;
-                case 0xBE: CP(ReadByte(registers.HL)); return 0;
-                case 0xBF: CP(registers.A); return 0;
+                case 0x80: ADD(registers.B); return 0; // ADD A,B
+                case 0x81: ADD(registers.C); return 0; // ADD A,C
+                case 0x82: ADD(registers.D); return 0; // ADD A,D
+                case 0x83: ADD(registers.E); return 0; // ADD A,E
+                case 0x84: ADD(registers.H); return 0; // ADD A,H
+                case 0x85: ADD(registers.L); return 0; // ADD A,L
+                case 0x86: ADD(ReadByte(registers.HL)); return 0; // ADD A,(HL)
+                case 0x87: ADD(registers.A); return 0; // ADD A,A
+                case 0x88: ADC(registers.B); return 0; // ADC A,B
+                case 0x89: ADC(registers.C); return 0; // ADC A,C
+                case 0x8A: ADC(registers.D); return 0; // ADC A,D
+                case 0x8B: ADC(registers.E); return 0; // ADC A,E
+                case 0x8C: ADC(registers.H); return 0; // ADC A,H
+                case 0x8D: ADC(registers.L); return 0; // ADC A,L
+                case 0x8E: ADC(ReadByte(registers.HL)); return 0; // ADC A,(HL)
+                case 0x8F: ADC(registers.A); return 0; // ADC A,A
+                case 0x90: SUB(registers.B); return 0; // SUB B
+                case 0x91: SUB(registers.C); return 0; // SUB C
+                case 0x92: SUB(registers.D); return 0; // SUB D
+                case 0x93: SUB(registers.E); return 0; // SUB E
+                case 0x94: SUB(registers.H); return 0; // SUB H
+                case 0x95: SUB(registers.L); return 0; // SUB L
+                case 0x96: SUB(ReadByte(registers.HL)); return 0; // SUB (HL)
+                case 0x97: SUB(registers.A); return 0; // SUB A
+                case 0x98: SBC(registers.B); return 0; // SBC A,B
+                case 0x99: SBC(registers.C); return 0; // SBC A,C
+                case 0x9A: SBC(registers.D); return 0; // SBC A,D
+                case 0x9B: SBC(registers.E); return 0; // SBC A,E
+                case 0x9C: SBC(registers.H); return 0; // SBC A,H
+                case 0x9D: SBC(registers.L); return 0; // SBC A,L
+                case 0x9E: SBC(ReadByte(registers.HL)); return 0; // SBC A,(HL)
+                case 0x9F: SBC(registers.A); return 0; // SBC A,A
+                case 0xA0: AND(registers.B); return 0; // AND B
+                case 0xA1: AND(registers.C); return 0; // AND C
+                case 0xA2: AND(registers.D); return 0; // AND D
+                case 0xA3: AND(registers.E); return 0; // AND E
+                case 0xA4: AND(registers.H); return 0; // AND H
+                case 0xA5: AND(registers.L); return 0; // AND L
+                case 0xA6: AND(ReadByte(registers.HL)); return 0; // AND (HL)
+                case 0xA7: AND(registers.A); return 0; // AND A
+                case 0xA8: XOR(registers.B); return 0; // XOR B
+                case 0xA9: XOR(registers.C); return 0; // XOR C
+                case 0xAA: XOR(registers.D); return 0; // XOR D
+                case 0xAB: XOR(registers.E); return 0; // XOR E
+                case 0xAC: XOR(registers.H); return 0; // XOR H
+                case 0xAD: XOR(registers.L); return 0; // XOR L
+                case 0xAE: XOR(ReadByte(registers.HL)); return 0; // XOR (HL)
+                case 0xAF: XOR(registers.A); return 0; // XOR A
+                case 0xB0: OR(registers.B); return 0; // OR B
+                case 0xB1: OR(registers.C); return 0; // OR C
+                case 0xB2: OR(registers.D); return 0; // OR D
+                case 0xB3: OR(registers.E); return 0; // OR E
+                case 0xB4: OR(registers.H); return 0; // OR H
+                case 0xB5: OR(registers.L); return 0; // OR L
+                case 0xB6: OR(ReadByte(registers.HL)); return 0; // OR (HL)
+                case 0xB7: OR(registers.A); return 0; // OR A
+                case 0xB8: CP(registers.B); return 0; // CP B
+                case 0xB9: CP(registers.C); return 0; // CP C
+                case 0xBA: CP(registers.D); return 0; // CP D
+                case 0xBB: CP(registers.E); return 0; // CP E
+                case 0xBC: CP(registers.H); return 0; // CP H
+                case 0xBD: CP(registers.L); return 0; // CP L
+                case 0xBE: CP(ReadByte(registers.HL)); return 0; // CP (HL)
+                case 0xBF: CP(registers.A); return 0; // CP A
                 case 0xC0: // RET NZ
                     Tick4(); // internal condition check
                     if (!registers.Flags.Z)
@@ -932,32 +907,26 @@ namespace GameboyEmu.Core
             }
             return 0;
         }
-
-        // ==================================================================
-        //  CB-prefixed opcodes (all M-cycle timed)
-        // ==================================================================
-
+        // Executes execute cb.
         private void ExecuteCB(int cbOpcode)
         {
             int reg = cbOpcode & 0x07;
             int op = cbOpcode >> 3;
-
-            if (reg == 0x06) // (HL) operand
+            if (reg == 0x06)
             {
                 byte value = ReadByte(registers.HL);
-
-                if ((cbOpcode & 0xC0) == 0x40) // BIT
+                if ((cbOpcode & 0xC0) == 0x40)
                 {
                     CompBit(value, (cbOpcode >> 3) & 0x07);
-                    return; // 12T total (4 fetch + 4 CB fetch + 4 read)
+                    return;
                 }
-
                 byte result;
-                if ((cbOpcode & 0xC0) == 0x80) // RES
+                if ((cbOpcode & 0xC0) == 0x80)
                     result = ResBit(value, (cbOpcode >> 3) & 0x07);
-                else if ((cbOpcode & 0xC0) == 0xC0) // SET
+                // Executes if.
+                else if ((cbOpcode & 0xC0) == 0xC0)
                     result = SetBitVal(value, (cbOpcode >> 3) & 0x07);
-                else // rotate/shift/swap
+                else
                 {
                     result = op switch
                     {
@@ -972,14 +941,11 @@ namespace GameboyEmu.Core
                         _ => value,
                     };
                 }
-                WriteByte(registers.HL, result); // 16T total
+                WriteByte(registers.HL, result);
                 return;
             }
-
-            // Register operand
             byte rv = GetCBReg(reg);
             byte nv;
-
             switch (cbOpcode & 0xC0)
             {
                 case 0x40: // BIT
@@ -1008,7 +974,7 @@ namespace GameboyEmu.Core
             }
             SetCBReg(reg, nv);
         }
-
+        // Executes get cb reg.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte GetCBReg(int r) => r switch
         {
@@ -1018,11 +984,10 @@ namespace GameboyEmu.Core
             3 => registers.E,
             4 => registers.H,
             5 => registers.L,
-            // 6 is (HL) – handled separately
             7 => registers.A,
             _ => 0,
         };
-
+        // Executes set cb reg.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void SetCBReg(int r, byte v)
         {
@@ -1037,11 +1002,7 @@ namespace GameboyEmu.Core
                 case 7: registers.A = v; break;
             }
         }
-
-        // ==================================================================
-        //  Timed Push/Pop (used by CALL, RET, PUSH, POP, RST, interrupts)
-        // ==================================================================
-
+        // Executes timed push word.
         private void TimedPushWord(uint value)
         {
             registers.SP--;
@@ -1049,7 +1010,7 @@ namespace GameboyEmu.Core
             registers.SP--;
             WriteByte(registers.SP, (byte)value);
         }
-
+        // Executes timed pop word.
         private uint TimedPopWord()
         {
             byte lo = ReadByte(registers.SP);
@@ -1058,25 +1019,20 @@ namespace GameboyEmu.Core
             registers.SP++;
             return (uint)(hi << 8 | lo);
         }
-
-        // Keep untimed versions for external use (GameBoy interrupt handler)
+        // Executes push word to stack.
         public void PushWordToStack(uint value)
         {
             registers.SP -= 2;
             memory.WriteWordToMemory(registers.SP, value);
         }
-
+        // Executes pop word from stack.
         public uint PopWordFromStack()
         {
             uint value = memory.ReadWordFromMemory(registers.SP);
             registers.SP += 2;
             return value;
         }
-
-        // ==================================================================
-        //  ALU
-        // ==================================================================
-
+        // Executes add.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ADD(byte val)
         {
@@ -1087,7 +1043,7 @@ namespace GameboyEmu.Core
             registers.Flags.N = false;
             registers.A = (byte)result;
         }
-
+        // Executes adc.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ADC(byte val)
         {
@@ -1099,7 +1055,7 @@ namespace GameboyEmu.Core
             registers.Flags.N = false;
             registers.A = (byte)result;
         }
-
+        // Executes addhl.
         private void ADDHL(uint source16bitRegister)
         {
             uint value = registers.HL + source16bitRegister;
@@ -1108,7 +1064,7 @@ namespace GameboyEmu.Core
             registers.Flags.N = false;
             registers.HL = value;
         }
-
+        // Executes sub.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void SUB(byte val)
         {
@@ -1119,7 +1075,7 @@ namespace GameboyEmu.Core
             registers.Flags.N = true;
             registers.A = (byte)result;
         }
-
+        // Executes sbc.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void SBC(byte val)
         {
@@ -1131,11 +1087,7 @@ namespace GameboyEmu.Core
             registers.Flags.N = true;
             registers.A = (byte)result;
         }
-
-        // ==================================================================
-        //  Logic ops
-        // ==================================================================
-
+        // Executes and.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void AND(byte val)
         {
@@ -1145,7 +1097,7 @@ namespace GameboyEmu.Core
             registers.Flags.H = true;
             registers.Flags.C = false;
         }
-
+        // Executes xor.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void XOR(byte val)
         {
@@ -1155,7 +1107,7 @@ namespace GameboyEmu.Core
             registers.Flags.H = false;
             registers.Flags.C = false;
         }
-
+        // Executes or.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void OR(byte val)
         {
@@ -1165,7 +1117,7 @@ namespace GameboyEmu.Core
             registers.Flags.H = false;
             registers.Flags.C = false;
         }
-
+        // Executes cp.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void CP(byte val)
         {
@@ -1175,11 +1127,7 @@ namespace GameboyEmu.Core
             registers.Flags.H = (registers.A & 0xF) < (val & 0xF);
             registers.Flags.C = (result >> 8) != 0;
         }
-
-        // ==================================================================
-        //  Rotate / Shift
-        // ==================================================================
-
+        // Executes rlc.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte RLC(byte value)
         {
@@ -1191,7 +1139,7 @@ namespace GameboyEmu.Core
             registers.Flags.N = false;
             return result;
         }
-
+        // Executes rl.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte RL(byte value)
         {
@@ -1203,7 +1151,7 @@ namespace GameboyEmu.Core
             registers.Flags.N = false;
             return result;
         }
-
+        // Executes rrc.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte RRC(byte value)
         {
@@ -1215,7 +1163,7 @@ namespace GameboyEmu.Core
             registers.Flags.N = false;
             return result;
         }
-
+        // Executes rr.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte RR(byte value)
         {
@@ -1227,7 +1175,7 @@ namespace GameboyEmu.Core
             registers.Flags.N = false;
             return result;
         }
-
+        // Executes shl.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte SHL(byte value)
         {
@@ -1238,7 +1186,7 @@ namespace GameboyEmu.Core
             registers.Flags.N = false;
             return result;
         }
-
+        // Executes shr.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte SHR(byte value)
         {
@@ -1249,7 +1197,7 @@ namespace GameboyEmu.Core
             registers.Flags.N = false;
             return result;
         }
-
+        // Executes srl.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte SRL(byte value)
         {
@@ -1260,11 +1208,7 @@ namespace GameboyEmu.Core
             registers.Flags.N = false;
             return result;
         }
-
-        // ==================================================================
-        //  Misc helpers
-        // ==================================================================
-
+        // Executes swap nibble.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte SwapNibble(byte value)
         {
@@ -1275,7 +1219,7 @@ namespace GameboyEmu.Core
             registers.Flags.C = false;
             return result;
         }
-
+        // Executes daa.
         private void DAA()
         {
             if (registers.Flags.N)
@@ -1298,7 +1242,7 @@ namespace GameboyEmu.Core
             registers.Flags.Z = (registers.A == 0);
             registers.Flags.H = false;
         }
-
+        // Executes comp bit.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void CompBit(int register, int bitIndex)
         {
@@ -1306,26 +1250,21 @@ namespace GameboyEmu.Core
             registers.Flags.H = true;
             registers.Flags.N = false;
         }
-
+        // Executes set bit val.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static byte SetBitVal(int register, int bitIndex)
             => (byte)(register | (1 << bitIndex));
-
+        // Executes res bit.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static byte ResBit(int register, int bitIndex)
             => (byte)(register & ~(1 << bitIndex));
-
-        // Legacy SetBit for GameBoy.cs compatibility (interrupt flag clearing)
+        // Executes set bit.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static byte SetBit(int register, int bitIndex, int newBitValue)
             => newBitValue != 0
                 ? (byte)(register | (1 << bitIndex))
                 : (byte)(register & ~(1 << bitIndex));
-
-        // ==================================================================
-        //  IME / Interrupt handling
-        // ==================================================================
-
+        // Executes update ime.
         public void UpdateIME()
         {
             if (_imeEnableDelay > 0)
@@ -1335,34 +1274,29 @@ namespace GameboyEmu.Core
                     IME = true;
             }
         }
-
+        // Executes is in oam range.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool IsInOamRange(uint value)
             => value >= 0xFE00 && value <= 0xFEFF;
-
+        // Executes execute interrupt.
         public int ExecuteInterrupt(int b)
         {
             if (Halted)
                 Halted = false;
-
             if (IME)
             {
-                // Interrupt dispatch: 5 M-cycles total
-                // M0: two internal cycles
                 Tick4();
                 Tick4();
-                // M2-M3: push PC
                 TimedPushWord(registers.PC);
-                // M4: set PC to handler (read of handler address is internal)
                 registers.PC = (ushort)(0x40 + (8 * b));
                 Tick4();
                 IME = false;
                 memory.IF = SetBit(memory.IF, b, 0);
-                return 0; // all timing handled internally
+                return 0;
             }
             return 0;
         }
-
+        // Executes halt.
         private void Halt()
         {
             if (IME)
@@ -1381,7 +1315,7 @@ namespace GameboyEmu.Core
                 }
             }
         }
-
+        // Executes stop.
         private void Stop()
         {
             registers.PC++;

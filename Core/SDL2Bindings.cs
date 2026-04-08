@@ -16,22 +16,11 @@ using System.Runtime.InteropServices;
 
 namespace GameboyEmu.Core
 {
-    /// <summary>
-    /// Minimal SDL2 P/Invoke bindings for cross-platform window, rendering, and input.
-    /// Requires SDL2 installed on the system:
-    ///   macOS:  brew install sdl2
-    ///   Linux:  sudo apt install libsdl2-dev
-    ///   Windows: place SDL2.dll next to the executable
-    /// </summary>
     internal static class SDL
     {
         private const string LibName = "SDL2";
 
-        /// <summary>
-        /// Register a custom native library resolver so the runtime can find
-        /// SDL2 in Homebrew (/opt/homebrew/lib) or other non-default paths.
-        /// Call once at startup before any SDL2 functions are used.
-        /// </summary>
+        // Executes register resolver.
         public static void RegisterResolver()
         {
             NativeLibrary.SetDllImportResolver(typeof(SDL).Assembly, (name, assembly, path) =>
@@ -39,17 +28,15 @@ namespace GameboyEmu.Core
                 if (name != LibName)
                     return IntPtr.Zero;
 
-                // Try the default search first
                 if (NativeLibrary.TryLoad(name, assembly, path, out IntPtr handle))
                     return handle;
 
-                // Platform-specific fallback paths
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                 {
                     string[] macPaths =
                     [
-                        "/opt/homebrew/lib/libSDL2.dylib",           // Apple Silicon Homebrew
-                        "/usr/local/lib/libSDL2.dylib",              // Intel Homebrew
+                        "/opt/homebrew/lib/libSDL2.dylib",
+                        "/usr/local/lib/libSDL2.dylib",
                         "/opt/homebrew/lib/libSDL2-2.0.0.dylib",
                         "/usr/local/lib/libSDL2-2.0.0.dylib",
                     ];
@@ -57,6 +44,7 @@ namespace GameboyEmu.Core
                         if (NativeLibrary.TryLoad(p, out handle))
                             return handle;
                 }
+                // Executes if.
                 else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
                 {
                     string[] linuxPaths =
@@ -75,42 +63,32 @@ namespace GameboyEmu.Core
             });
         }
 
-        // --- Init flags ---
         public const uint SDL_INIT_VIDEO = 0x00000020;
         public const uint SDL_INIT_AUDIO = 0x00000010;
 
-        // --- Audio format ---
-        public const ushort AUDIO_F32SYS = 0x8120; // 32-bit float, system byte order
+        public const ushort AUDIO_F32SYS = 0x8120;
 
-        // --- Window flags ---
         public const uint SDL_WINDOW_SHOWN = 0x00000004;
         public const uint SDL_WINDOW_RESIZABLE = 0x00000020;
 
-        // --- Window position ---
         public const int SDL_WINDOWPOS_CENTERED = 0x2FFF0000;
 
-        // --- Renderer flags ---
         public const uint SDL_RENDERER_ACCELERATED = 0x00000002;
 
-        // --- Pixel format ---
         public const uint SDL_PIXELFORMAT_ARGB8888 = 0x16362004;
 
-        // --- Texture access ---
         public const int SDL_TEXTUREACCESS_STREAMING = 1;
 
-        // --- Hint names ---
         public const string SDL_HINT_RENDER_SCALE_QUALITY = "SDL_RENDER_SCALE_QUALITY";
 
-        // --- Event types ---
         public const uint SDL_QUIT = 0x100;
         public const uint SDL_KEYDOWN = 0x300;
         public const uint SDL_KEYUP = 0x301;
 
-        // --- Scancode values for key mapping ---
-        public const int SDL_SCANCODE_RETURN = 40;   // Start
-        public const int SDL_SCANCODE_SPACE = 44;   // Select
-        public const int SDL_SCANCODE_Z = 29;   // A
-        public const int SDL_SCANCODE_X = 27;   // B
+        public const int SDL_SCANCODE_RETURN = 40;
+        public const int SDL_SCANCODE_SPACE = 44;
+        public const int SDL_SCANCODE_Z = 29;
+        public const int SDL_SCANCODE_X = 27;
         public const int SDL_SCANCODE_UP = 82;
         public const int SDL_SCANCODE_DOWN = 81;
         public const int SDL_SCANCODE_LEFT = 80;
@@ -123,12 +101,9 @@ namespace GameboyEmu.Core
         public const int SDL_SCANCODE_M = 16;
         public const int SDL_SCANCODE_N = 17;
 
-        // --- Key modifier masks ---
         public const ushort KMOD_LCTRL = 0x0040;
         public const ushort KMOD_RCTRL = 0x0080;
         public const ushort KMOD_CTRL = KMOD_LCTRL | KMOD_RCTRL;
-
-        // --- Structs ---
 
         [StructLayout(LayoutKind.Sequential)]
         public struct SDL_Keysym
@@ -158,8 +133,6 @@ namespace GameboyEmu.Core
             [FieldOffset(0)] public uint type;
             [FieldOffset(0)] public SDL_KeyboardEvent key;
         }
-
-        // --- Functions ---
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int SDL_Init(uint flags);
@@ -218,6 +191,7 @@ namespace GameboyEmu.Core
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int SDL_RenderDrawLine(IntPtr renderer, int x1, int y1, int x2, int y2);
 
+        // Defines the sdl blend mode enum.
         public enum SDL_BlendMode
         {
             SDL_BLENDMODE_NONE = 0x00000000,
@@ -229,7 +203,6 @@ namespace GameboyEmu.Core
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void SDL_Delay(uint ms);
 
-        // Overload that accepts an explicit destination rectangle
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "SDL_RenderCopy")]
         public static extern int SDL_RenderCopy(IntPtr renderer, IntPtr texture, IntPtr srcrect, ref SDL_Rect dstrect);
 
@@ -238,8 +211,6 @@ namespace GameboyEmu.Core
         {
             public int x, y, w, h;
         }
-
-        // --- Surface / BMP loading ---
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
         public static extern IntPtr SDL_RWFromFile(string file, string mode);
@@ -252,8 +223,6 @@ namespace GameboyEmu.Core
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void SDL_FreeSurface(IntPtr surface);
-
-        // --- Audio structs ---
 
         [StructLayout(LayoutKind.Sequential)]
         public struct SDL_AudioSpec
@@ -268,8 +237,6 @@ namespace GameboyEmu.Core
             public IntPtr callback;
             public IntPtr userdata;
         }
-
-        // --- Audio functions ---
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         public static extern int SDL_InitSubSystem(uint flags);
