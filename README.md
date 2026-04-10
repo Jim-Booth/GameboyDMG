@@ -72,6 +72,8 @@ A Game Boy (DMG) emulator written in C# targeting .NET 9.0, using SDL2 for cross
 
 ### Blargg Tests
 
+Over 180 DMG games have also been tested as working with this emulator.
+
 | ROM | Pass/Fail | Notes |
 |-----|-----------|-------|
 | `cpu_instrs` | Pass | Core CPU instruction behavior passes. |
