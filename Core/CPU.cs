@@ -27,16 +27,6 @@ namespace GameboyEmu.Core
         private bool Halted;
         public bool IsHalted => Halted;
         private bool HaltBug;
-        // Executes reset.
-        public void Reset()
-        {
-            registers = new Registers();
-            Running = true;
-            IME = false;
-            _imeEnableDelay = 0;
-            Halted = false;
-            HaltBug = false;
-        }
         // Executes tick4.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void Tick4()
@@ -1010,19 +1000,6 @@ namespace GameboyEmu.Core
             byte hi = ReadByte(registers.SP);
             registers.SP++;
             return (uint)(hi << 8 | lo);
-        }
-        // Executes push word to stack.
-        public void PushWordToStack(uint value)
-        {
-            registers.SP -= 2;
-            memory.WriteWordToMemory(registers.SP, value);
-        }
-        // Executes pop word from stack.
-        public uint PopWordFromStack()
-        {
-            uint value = memory.ReadWordFromMemory(registers.SP);
-            registers.SP += 2;
-            return value;
         }
         // Executes add.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

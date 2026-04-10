@@ -208,7 +208,7 @@ namespace GameboyEmu
                 if (romPath != null)
                 {
                     int romSize = (int)new FileInfo(romPath).Length;
-                    gb.LoadCartridge(romPath, romSize, noBoot || skipBootForThisLaunch);
+                    gb.LoadCartridge(romPath, noBoot || skipBootForThisLaunch);
                     Console.WriteLine($"Loaded ROM: {romPath} ({romSize} bytes)");
                 }
                 else

@@ -186,14 +186,6 @@ namespace GameboyEmu.Core
             SetLCDStatus();
         }
 
-        // Executes dma transfer.
-        public void DMATransfer(byte value)
-        {
-            uint address = (uint)(value << 8);
-            for (int i = 0; i < 0xA0; i++)
-                _mmu.WriteByteToMemory((uint)(0xFE00 + i), _mmu.ReadByteFromMemory(address + (uint)i));
-        }
-
         // Executes consume frame ready.
         public bool ConsumeFrameReady()
         {

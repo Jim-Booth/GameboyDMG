@@ -92,26 +92,6 @@ namespace GameboyEmu.Core
             Console.WriteLine("[APU] Audio initialised – 44100 Hz stereo float32");
         }
 
-        // Executes reset.
-        public void Reset()
-        {
-            _fsTimer = FrameSequencerPeriod;
-            _fsStep = 0;
-            _sampleTimer = 0;
-            _sampleIdx = 0;
-            Array.Clear(_sampleBuf, 0, _sampleBuf.Length);
-            _powered = true;
-            _nr50 = 0x77;
-            _nr51 = 0xF3;
-            _ch1.Reset();
-            _ch2.Reset();
-            _ch3.Reset();
-            _ch4.Reset();
-
-            if (_audioReady)
-                SDL.SDL_ClearQueuedAudio(_audioDevice);
-        }
-
         // Executes tick.
         public void Tick(int cpuCycles)
         {

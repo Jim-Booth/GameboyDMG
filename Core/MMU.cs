@@ -48,8 +48,6 @@ namespace GameboyEmu.Core
         private bool _rtcMapped = false;
         private byte _rtcSelectedReg = 0;
 
-        private static readonly int[] TimerClockSpeeds = { 1024, 16, 64, 256 };
-
         private readonly GameBoy gameboy = gb;
 
         // Gets or sets apu.
@@ -473,19 +471,6 @@ namespace GameboyEmu.Core
             }
 
             return Memory[addr];
-        }
-
-        // Executes read word from memory.
-        public uint ReadWordFromMemory(uint addr)
-        {
-            return (uint)ReadByteFromMemory(addr + 1) << 8 | ReadByteFromMemory(addr);
-        }
-
-        // Executes write word to memory.
-        public void WriteWordToMemory(uint addr, uint value)
-        {
-            WriteByteToMemory(addr + 1, (byte)(value >> 8));
-            WriteByteToMemory(addr, (byte)value);
         }
 
         // Executes init rom banks.

@@ -43,9 +43,6 @@ namespace GameboyEmu.Core
 
         private readonly byte[] tempROM = new byte[0xFF];
 
-        public int DivCounter;
-        public int TimerCounter = 1024;
-        public int TimerVariable = 0;
         private bool _timaOverflowPending = false;
         private int _timaOverflowDelay = 0;
         private int _timaReloadBlockTicks = 0;
@@ -64,8 +61,6 @@ namespace GameboyEmu.Core
         // Gets or sets reset requested.
         public bool ResetRequested { get; set; }
 
-        // Gets or sets is running.
-        public bool IsRunning { get; set; }
         private readonly Stopwatch _runTimer = new();
         private long _emulatedCycles;
         private int _cyclesUntilPace = CyclesPerFrame;
@@ -90,7 +85,7 @@ namespace GameboyEmu.Core
         }
 
         // Executes load cartridge.
-        public void LoadCartridge(string path, int size, bool skipBootROM = false)
+        public void LoadCartridge(string path, bool skipBootROM = false)
         {
             byte[] romBytes = File.ReadAllBytes(path);
             mMU!.Cartridge = romBytes;
@@ -165,7 +160,6 @@ namespace GameboyEmu.Core
             mMU!.Memory[0xFF4A] = 0x00;
             mMU!.Memory[0xFF4B] = 0x00;
             mMU!.Memory[0xFFFF] = 0x00;
-            TimerCounter = 1024;
             keypadState = 255;
             pPU.ScanLineCounter = 456;
             _systemCounter = 0;
@@ -180,7 +174,6 @@ namespace GameboyEmu.Core
         // Executes start.
         public void Start()
         {
-            IsRunning = true;
             cPU!.Running = true;
             _runTimer.Restart();
             _emulatedCycles = 0;
@@ -210,7 +203,6 @@ namespace GameboyEmu.Core
                 if (_useBootROM && cPU.registers.PC == 0x100)
                     PostBootROMCopy();
             }
-            IsRunning = false;
         }
 
         // Executes advance hardware.
@@ -299,8 +291,6 @@ namespace GameboyEmu.Core
 
                 _systemCounter++;
                 mMU!.Memory[0xFF04] = (byte)(_systemCounter >> 8);
-                DivCounter = _systemCounter;
-
                 bool newTimerSignal = GetTimerSignal();
                 if (oldTimerSignal && !newTimerSignal)
                     IncrementTimaOnTimerEdge();
@@ -550,12 +540,6 @@ namespace GameboyEmu.Core
                 return (byte)(register & ~(1 << bitIndex));
         }
 
-        // Executes dma transfer.
-        public void DMATransfer(byte value)
-        {
-            StartDmaTransfer(value);
-        }
-
         // Executes start dma transfer.
         public void StartDmaTransfer(byte value)
         {
@@ -570,7 +554,6 @@ namespace GameboyEmu.Core
         {
             bool oldTimerSignal = GetTimerSignal();
             _systemCounter = 0;
-            DivCounter = 0;
             mMU!.Memory[0xFF04] = 0;
 
             if (oldTimerSignal && !GetTimerSignal())
