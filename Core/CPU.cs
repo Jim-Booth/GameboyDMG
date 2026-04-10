@@ -886,7 +886,7 @@ namespace GameboyEmu.Core
                         return 0;
                     }
                 case 0xFB: // EI
-                    _imeEnableDelay = 2;
+                    _imeEnableDelay = 1;
                     return 0;
                 case 0xFE: // CP d8
                     CP(FetchByte());

@@ -34,6 +34,7 @@ namespace GameboyEmu.Core
         private const int CpuClockRate = 4194304;
         private const int CyclesPerFrame = 456 * 154;
         private static readonly double StopwatchTicksPerCycle = (double)Stopwatch.Frequency / CpuClockRate;
+        private static readonly bool EnableOamBugEmulation = true;
 
         public CPU cPU;
         public MMU mMU;
@@ -54,6 +55,8 @@ namespace GameboyEmu.Core
         private ushort _dmaSourceBase;
         private int _dmaBytesCopied;
         private int _dmaTicksToNextByte;
+
+        public bool IsDmaActive => _dmaActive;
 
         byte keypadState = 0xFF;
 
@@ -385,20 +388,28 @@ namespace GameboyEmu.Core
         // Executes handle interupts.
         private void HandleInterupts()
         {
-            cPU!.UpdateIME();
-
-            for (int i = 0; i < 5; i++)
+            int pending = mMU!.IF & mMU!.IE & 0x1F;
+            if (pending != 0)
             {
-                if ((((mMU!.IF & mMU!.IE) >> i) & 0x1) == 1)
+                for (int i = 0; i < 5; i++)
                 {
+                    if ((pending & (1 << i)) == 0)
+                        continue;
+
                     cPU!.ExecuteInterrupt(i);
+                    break;
                 }
             }
+
+            cPU!.UpdateIME();
         }
 
         // Executes trigger oam bug.
         internal void TriggerOamBug(OamBugAccessType accessType, int mCycleOffset = 0)
         {
+            if (!EnableOamBugEmulation)
+                return;
+
             if (!IsOamScanAtOffset(mCycleOffset, out int row))
                 return;
 

@@ -249,6 +249,24 @@ namespace GameboyEmu.Core
             }
 
             // Executes if.
+            else if (addr >= 0x8000 && addr <= 0x9FFF)
+            {
+                if ((Memory[0xFF40] & 0x80) != 0 && gameboy.pPU != null && gameboy.pPU.IsMode3)
+                    return;
+
+                Memory[addr] = value;
+            }
+
+            // Executes if.
+            else if (addr >= 0xFE00 && addr <= 0xFE9F)
+            {
+                if (gameboy.IsDmaActive || ((Memory[0xFF40] & 0x80) != 0 && gameboy.pPU != null && gameboy.pPU.IsOamBlocked))
+                    return;
+
+                Memory[addr] = value;
+            }
+
+            // Executes if.
             else if ((addr >= 0xC000) && (addr <= 0xDFFF))
             {
                 Memory[addr] = value;
@@ -262,8 +280,10 @@ namespace GameboyEmu.Core
             }
 
             // Executes if.
-            else if (addr >= 0xFEA0 && addr < 0xFEFF && value > 0)
-            { }
+            else if (addr >= 0xFEA0 && addr < 0xFF00)
+            {
+                // Unusable OAM area: writes are ignored.
+            }
 
             // Executes if.
             else if (0xFF04 == addr)
@@ -322,6 +342,13 @@ namespace GameboyEmu.Core
             }
 
             // Executes if.
+            else if (addr == 0xFF41)
+            {
+                // STAT: only bits 3-6 are writable; mode and coincidence are read-only.
+                Memory[addr] = (byte)((Memory[addr] & 0x07) | (value & 0x78));
+            }
+
+            // Executes if.
             else if (addr == 0xFF44)
             {
                 Memory[addr] = 0;
@@ -348,6 +375,22 @@ namespace GameboyEmu.Core
         // Executes read byte from memory.
         public byte ReadByteFromMemory(uint addr)
         {
+            if (addr >= 0x8000 && addr <= 0x9FFF)
+            {
+                if ((Memory[0xFF40] & 0x80) != 0 && gameboy.pPU != null && gameboy.pPU.IsMode3)
+                    return 0xFF;
+
+                return Memory[addr];
+            }
+
+            if (addr >= 0xFE00 && addr <= 0xFE9F)
+            {
+                if (gameboy.IsDmaActive || ((Memory[0xFF40] & 0x80) != 0 && gameboy.pPU != null && gameboy.pPU.IsOamBlocked))
+                    return 0xFF;
+
+                return Memory[addr];
+            }
+
             if (addr >= 0x4000 && addr <= 0x7FFF)
             {
                 int effectiveBank;

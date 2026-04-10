@@ -53,6 +53,42 @@ namespace GameboyEmu.Core
         private bool _frameReady;
         private int _lcdEnableElapsed = -1;
 
+        public bool IsMode3
+        {
+            get
+            {
+                byte[] mem = _mmu.Memory;
+                if ((mem[0xFF40] & 0x80) == 0)
+                    return false;
+
+                byte ly = mem[0xFF44];
+                if (ly >= 144)
+                    return false;
+
+                int mode2bounds = CyclesPerScanline - 80;
+                int mode3bounds = mode2bounds - currentMode3Duration;
+                return ScanLineCounter < mode2bounds && ScanLineCounter >= mode3bounds;
+            }
+        }
+
+        public bool IsOamBlocked
+        {
+            get
+            {
+                byte[] mem = _mmu.Memory;
+                if ((mem[0xFF40] & 0x80) == 0)
+                    return false;
+
+                byte ly = mem[0xFF44];
+                if (ly >= 144)
+                    return false;
+
+                int mode2bounds = CyclesPerScanline - 80;
+                int mode3bounds = mode2bounds - currentMode3Duration;
+                return ScanLineCounter >= mode3bounds;
+            }
+        }
+
         // Executes ppu.
         static PPU()
         {
@@ -139,7 +175,12 @@ namespace GameboyEmu.Core
                     windowLineCounter++;
                 scanLineRendered = true;
 
-                currentMode3Duration = ComputeMode3Duration(mem[0xFF44]);
+                int spriteCount = CountSpritesOnLine(mem[0xFF44]);
+                int scxPenalty = mem[0xFF43] & 7;
+                int windowPenalty = windowWasRenderedThisLine ? 6 : 0;
+                currentMode3Duration = 172 + scxPenalty + (spriteCount * 6) + windowPenalty;
+                if (currentMode3Duration > 289)
+                    currentMode3Duration = 289;
             }
 
             SetLCDStatus();
@@ -249,24 +290,12 @@ namespace GameboyEmu.Core
             mem[0xFF41] = status;
         }
 
-        // Executes compute mode3 duration.
-        private int ComputeMode3Duration(int scanline)
+        // Executes count sprites on line.
+        private int CountSpritesOnLine(int scanline)
         {
             byte[] mem = _mmu.Memory;
             byte lcdc = mem[0xFF40];
-
-            int duration = 172;
-            int scx = mem[0xFF43];
-            duration += scx & 7;
-
-            bool windowEnabled = (lcdc & 0x20) != 0 && mem[0xFF4A] <= scanline;
-            int windowX = mem[0xFF4B] - 7;
-            if (windowEnabled && windowX < Width)
-                duration += 6;
-
             int ysize = (lcdc & 0x04) != 0 ? 16 : 8;
-            Span<int> spriteX = stackalloc int[10];
-            Span<int> spriteOam = stackalloc int[10];
             int spriteCount = 0;
 
             for (int sprite = 0; sprite < 40 && spriteCount < 10; sprite++)
@@ -275,62 +304,10 @@ namespace GameboyEmu.Core
                 int yPos = mem[addr] - 16;
                 if (scanline >= yPos && scanline < yPos + ysize)
                 {
-                    spriteX[spriteCount] = mem[addr + 1] - 8;
-                    spriteOam[spriteCount] = sprite;
                     spriteCount++;
                 }
             }
-
-            for (int i = 1; i < spriteCount; i++)
-            {
-                int j = i;
-                while (j > 0)
-                {
-                    bool shouldSwap = spriteX[j - 1] > spriteX[j]
-                        || (spriteX[j - 1] == spriteX[j] && spriteOam[j - 1] > spriteOam[j]);
-                    if (!shouldSwap) break;
-                    (spriteX[j], spriteX[j - 1]) = (spriteX[j - 1], spriteX[j]);
-                    (spriteOam[j], spriteOam[j - 1]) = (spriteOam[j - 1], spriteOam[j]);
-                    j--;
-                }
-            }
-
-            bool[] seenTile = new bool[64];
-
-            for (int i = 0; i < spriteCount; i++)
-            {
-                int x = spriteX[i];
-
-                if (x == -8)
-                {
-                    duration += 11;
-                    continue;
-                }
-
-                if (x >= Width)
-                    continue;
-
-                int pixelX = x < 0 ? 0 : x;
-                bool useWindow = windowEnabled && pixelX >= windowX;
-                int layerX = useWindow ? pixelX - windowX : pixelX + scx;
-                int tileX = (layerX >> 3) & 31;
-                int tileKey = tileX + (useWindow ? 32 : 0);
-
-                if (!seenTile[tileKey])
-                {
-                    seenTile[tileKey] = true;
-                    int pixelsRightInTile = 7 - (layerX & 7);
-                    int bgWait = pixelsRightInTile - 2;
-                    if (bgWait > 0)
-                        duration += bgWait;
-                }
-
-                duration += 6;
-            }
-
-            if (duration < 172) duration = 172;
-            if (duration > 289) duration = 289;
-            return duration;
+            return spriteCount;
         }
 
         // Executes draw scan line.
